@@ -1,0 +1,379 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Phases: (1) assemble + pack + push via go-gemara, (2) keyless sign/verify on source,
+# (3) optional promote, (4) sign/verify on destination. This action does not generate
+# SLSA or SBOM attestations—callers add those in separate workflow steps or reusables.
+# See README: boundaries, and caller patterns (concurrency, ref gates, environments).
+name: Publish Gemara OCI bundle
+description: >-
+  Assemble a root Gemara YAML into an OCI bundle, push to a registry, sign/verify,
+  and optionally promote to a second registry. Uses go-gemara bundle SDK internally.
+  Boolean flags use the strings "true" / "false".
+
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  registry:
+    description: Registry host (e.g. ghcr.io)
+    required: false
+    default: ghcr.io
+  repository:
+    description: Repository path without registry (e.g. org/gemara/my-bundle)
+    required: true
+  tag:
+    description: Tag to push
+    required: true
+  file:
+    description: Root Gemara artifact YAML (Policy, Catalog, or Guidance), relative to working_directory
+    required: true
+  username:
+    description: Registry user
+    required: false
+    default: ""
+  password:
+    description: Registry token
+    required: true
+  validate:
+    description: Run gemara.Load schema validation before assemble
+    required: false
+    default: "true"
+  bundle_version:
+    description: Bundle format version
+    required: false
+    default: "1"
+  working_directory:
+    description: Working directory (relative to repo root) for resolving the file input
+    required: false
+    default: "."
+  oras_version:
+    description: ORAS CLI version (no v prefix)
+    required: false
+    default: "1.2.0"
+  sign_source:
+    description: Keyless-sign source digest after publish
+    required: false
+    default: "true"
+  verify_source:
+    description: Verify source digest signature after sign/publish
+    required: false
+    default: "true"
+  promote_to_destination:
+    description: >-
+      Copy artifact from the source registry to destination_* (second registry). Use any OCI registry.
+    required: false
+    default: "false"
+  destination_registry:
+    description: >-
+      Promotion destination registry host (e.g. quay.io, ghcr.io, *.dkr.ecr.*.amazonaws.com).
+      Required when promote_to_destination is true.
+    required: false
+    default: ""
+  destination_repository:
+    description: Promotion image path without registry host (namespace/repository).
+    required: false
+    default: ""
+  destination_tag:
+    description: Destination tag when promoting (defaults to source tag input when empty).
+    required: false
+    default: ""
+  destination_username:
+    description: Credentials for destination registry (promotion push).
+    required: false
+    default: ""
+  destination_password:
+    description: Token/password for destination registry (promotion).
+    required: false
+    default: ""
+  trust_mode:
+    description: copy-only, copy-referrers, or resign destination
+    required: false
+    default: resign
+  sign_destination:
+    description: Keyless-sign destination digest (usually true for trust_mode=resign)
+    required: false
+    default: "true"
+  verify_destination:
+    description: Verify destination digest signature
+    required: false
+    default: "true"
+  allowed_identity_regex:
+    description: Optional regex for certificate identity in cosign verify
+    required: false
+    default: ""
+  cosign_version:
+    description: Cosign release version
+    required: false
+    default: v2.4.0
+  cosign_certificate_oidc_issuer:
+    description: >-
+      Expected OIDC issuer for keyless cosign verify (override for non-GitHub Actions signing environments).
+    required: false
+    default: "https://token.actions.githubusercontent.com"
+
+outputs:
+  digest:
+    description: Source manifest digest (sha256:...)
+    value: ${{ steps.finalize.outputs.source_digest }}
+  source_ref:
+    description: Published source reference with digest
+    value: ${{ steps.finalize.outputs.source_ref }}
+  source_digest:
+    description: Published source digest
+    value: ${{ steps.finalize.outputs.source_digest }}
+  destination_ref:
+    description: Destination reference with digest after promotion
+    value: ${{ steps.finalize.outputs.destination_ref }}
+  destination_digest:
+    description: Destination digest after promotion
+    value: ${{ steps.finalize.outputs.destination_digest }}
+  trust_mode:
+    description: Effective trust mode used for destination handling
+    value: ${{ steps.finalize.outputs.trust_mode }}
+  verified_source:
+    description: true when source verification step passed
+    value: ${{ steps.finalize.outputs.verified_source }}
+  verified_destination:
+    description: true when destination verification step passed
+    value: ${{ steps.finalize.outputs.verified_destination }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        FILE: ${{ inputs.file }}
+        PASSWORD: ${{ inputs.password }}
+        PROMOTE: ${{ inputs.promote_to_destination }}
+        DEST_REPOSITORY: ${{ inputs.destination_repository }}
+        DEST_USERNAME: ${{ inputs.destination_username }}
+        DEST_PASSWORD: ${{ inputs.destination_password }}
+        TRUST_MODE: ${{ inputs.trust_mode }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${FILE}" ]]; then
+          echo "::error::file input is required"
+          exit 1
+        fi
+        if [[ -z "${PASSWORD}" ]]; then
+          echo "::error::password input is required"
+          exit 1
+        fi
+        case "${TRUST_MODE}" in
+          copy-only|copy-referrers|resign) ;;
+          *)
+            echo "::error::trust_mode must be one of: copy-only, copy-referrers, resign (got: ${TRUST_MODE})"
+            exit 1
+            ;;
+        esac
+        if [[ "${PROMOTE}" == "true" ]]; then
+          if [[ -z "${DEST_REPOSITORY}" || -z "${DEST_USERNAME}" || -z "${DEST_PASSWORD}" ]]; then
+            echo "::error::destination_repository, destination_username, and destination_password are required when promote_to_destination=true"
+            exit 1
+          fi
+        fi
+
+    - name: Install ORAS CLI
+      uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
+      with:
+        version: ${{ inputs.oras_version }}
+
+    - name: Install cosign
+      if: >-
+        inputs.sign_source == 'true' || inputs.verify_source == 'true' ||
+        inputs.promote_to_destination == 'true'
+      uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382 # v3.6.0
+      with:
+        cosign-release: ${{ inputs.cosign_version }}
+
+    - name: Set up Go
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      with:
+        go-version-file: ${{ github.action_path }}/tools/publish/go.mod
+        cache-dependency-path: ${{ github.action_path }}/tools/publish/go.sum
+
+    - name: Publish
+      id: publish
+      shell: bash
+      env:
+        GEMARA_REGISTRY_PASSWORD: ${{ inputs.password }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}/${{ inputs.working_directory }}"
+        FILE="$(realpath "${{ inputs.file }}")"
+        ROOT_DIR="$(dirname "$FILE")"
+        VALIDATE_FLAG=""
+        if [[ "${{ inputs.validate }}" != "true" ]]; then
+          VALIDATE_FLAG="-validate=false"
+        fi
+        go build -C "${{ github.action_path }}/tools/publish" -o "${RUNNER_TEMP}/gemara-publish" .
+        cd "$ROOT_DIR"
+        "${RUNNER_TEMP}/gemara-publish" \
+          -registry="${{ inputs.registry }}" \
+          -repository="${{ inputs.repository }}" \
+          -tag="${{ inputs.tag }}" \
+          -file="$FILE" \
+          -username="${{ inputs.username }}" \
+          -bundle-version="${{ inputs.bundle_version }}" \
+          ${VALIDATE_FLAG}
+
+    - name: Sign, verify, and optionally promote to destination registry
+      id: finalize
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REPOSITORY: ${{ inputs.repository }}
+        TAG: ${{ inputs.tag }}
+        PASSWORD: ${{ inputs.password }}
+        USERNAME: ${{ inputs.username }}
+        SOURCE_DIGEST: ${{ steps.publish.outputs.digest }}
+        SIGN_SOURCE: ${{ inputs.sign_source }}
+        VERIFY_SOURCE: ${{ inputs.verify_source }}
+        PROMOTE: ${{ inputs.promote_to_destination }}
+        DEST_REGISTRY: ${{ inputs.destination_registry }}
+        DEST_REPOSITORY: ${{ inputs.destination_repository }}
+        DEST_TAG: ${{ inputs.destination_tag }}
+        DEST_USERNAME: ${{ inputs.destination_username }}
+        DEST_PASSWORD: ${{ inputs.destination_password }}
+        TRUST_MODE: ${{ inputs.trust_mode }}
+        SIGN_DESTINATION: ${{ inputs.sign_destination }}
+        VERIFY_DESTINATION: ${{ inputs.verify_destination }}
+        ALLOWED_IDENTITY_REGEX: ${{ inputs.allowed_identity_regex }}
+        DEFAULT_ALLOWED_IDENTITY_REGEX: ${{ format('^https://github.com/{0}/.github/workflows/', github.repository) }}
+        COSIGN_CERTIFICATE_OIDC_ISSUER: ${{ inputs.cosign_certificate_oidc_issuer }}
+      run: |
+        set -euo pipefail
+        : "${GITHUB_OUTPUT:?}"
+
+        normalize_oci_digest() {
+          local d="${1//$'\r'/}"
+          d="${d//$'\n'/}"
+          d="${d,,}"
+          if [[ "$d" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "$d"
+            return 0
+          fi
+          if [[ "$d" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "sha256:$d"
+            return 0
+          fi
+          echo "::error::Expected sha256 manifest digest, got: $1" >&2
+          return 1
+        }
+
+        if [[ -z "${SOURCE_DIGEST:-}" ]]; then
+          echo "::error::No digest produced by publish step."
+          exit 1
+        fi
+        if ! SOURCE_DIGEST=$(normalize_oci_digest "$SOURCE_DIGEST"); then
+          exit 1
+        fi
+
+        if [[ -z "${ALLOWED_IDENTITY_REGEX:-}" ]]; then
+          ALLOWED_IDENTITY_REGEX="${DEFAULT_ALLOWED_IDENTITY_REGEX}"
+        fi
+
+        SOURCE_REF_TAGGED="${REGISTRY}/${REPOSITORY}:${TAG}"
+        SOURCE_REF="${REGISTRY}/${REPOSITORY}@${SOURCE_DIGEST}"
+        echo "source_ref=${SOURCE_REF}" >> "${GITHUB_OUTPUT}"
+        echo "source_digest=${SOURCE_DIGEST}" >> "${GITHUB_OUTPUT}"
+        echo "destination_ref=" >> "${GITHUB_OUTPUT}"
+        echo "destination_digest=" >> "${GITHUB_OUTPUT}"
+        echo "trust_mode=${TRUST_MODE}" >> "${GITHUB_OUTPUT}"
+        echo "verified_source=false" >> "${GITHUB_OUTPUT}"
+        echo "verified_destination=false" >> "${GITHUB_OUTPUT}"
+
+        verify_ref() {
+          local ref="$1"
+          cosign verify "$ref" \
+            --certificate-oidc-issuer "${COSIGN_CERTIFICATE_OIDC_ISSUER}" \
+            --certificate-identity-regexp "${ALLOWED_IDENTITY_REGEX}" >/dev/null
+        }
+
+        source_user="${USERNAME:-${GITHUB_ACTOR:-oauth2}}"
+        if [[ "${SIGN_SOURCE}" == "true" || "${VERIFY_SOURCE}" == "true" ]]; then
+          if [[ -n "${PASSWORD:-}" ]]; then
+            echo "${PASSWORD}" | docker login "${REGISTRY}" -u "${source_user}" --password-stdin
+          fi
+        fi
+
+        if [[ "${SIGN_SOURCE}" == "true" ]]; then
+          echo "Signing source digest: ${SOURCE_REF}"
+          cosign sign -y "${SOURCE_REF}"
+        fi
+
+        if [[ "${VERIFY_SOURCE}" == "true" ]]; then
+          echo "Verifying source digest: ${SOURCE_REF}"
+          verify_ref "${SOURCE_REF}"
+          echo "verified_source=true" >> "${GITHUB_OUTPUT}"
+        fi
+
+        if [[ "${PROMOTE}" != "true" ]]; then
+          exit 0
+        fi
+
+        if [[ -z "${DEST_REPOSITORY}" || -z "${DEST_USERNAME}" || -z "${DEST_PASSWORD}" ]]; then
+          echo "::error::destination_repository, destination_username, and destination_password are required when promote_to_destination is true."
+          exit 1
+        fi
+        if [[ -z "${PASSWORD}" ]]; then
+          echo "::error::password is required to pull source image from registry during promotion."
+          exit 1
+        fi
+
+        if [[ -z "${DEST_REGISTRY}" ]]; then
+          echo "::error::destination_registry is required when promote_to_destination is true."
+          exit 1
+        fi
+
+        DEST_TAG_RESOLVED="${DEST_TAG:-${TAG}}"
+        DEST_REF_TAGGED="${DEST_REGISTRY}/${DEST_REPOSITORY}:${DEST_TAG_RESOLVED}"
+
+        src_user="${source_user}"
+        echo "${PASSWORD}" | oras login "${REGISTRY}" -u "${src_user}" --password-stdin
+        echo "${DEST_PASSWORD}" | oras login "${DEST_REGISTRY}" -u "${DEST_USERNAME}" --password-stdin
+        if [[ "${TRUST_MODE}" == "resign" || "${SIGN_DESTINATION}" == "true" || "${VERIFY_DESTINATION}" == "true" ]]; then
+          echo "${DEST_PASSWORD}" | docker login "${DEST_REGISTRY}" -u "${DEST_USERNAME}" --password-stdin
+        fi
+
+        case "${TRUST_MODE}" in
+          copy-only)
+            oras copy "${SOURCE_REF_TAGGED}" "${DEST_REF_TAGGED}"
+            ;;
+          copy-referrers)
+            oras copy --recursive "${SOURCE_REF_TAGGED}" "${DEST_REF_TAGGED}"
+            ;;
+          resign)
+            oras copy "${SOURCE_REF_TAGGED}" "${DEST_REF_TAGGED}"
+            ;;
+          *)
+            echo "::error::Unsupported trust_mode: ${TRUST_MODE} (copy-only, copy-referrers, resign)"
+            exit 1
+            ;;
+        esac
+
+        DEST_DIGEST="$(oras resolve "${DEST_REF_TAGGED}" | tr -d '\r\n')"
+        if [[ -z "${DEST_DIGEST}" ]]; then
+          echo "::error::Failed to resolve destination digest for ${DEST_REF_TAGGED}"
+          exit 1
+        fi
+        if ! DEST_DIGEST=$(normalize_oci_digest "$DEST_DIGEST"); then
+          exit 1
+        fi
+        DEST_REF="${DEST_REGISTRY}/${DEST_REPOSITORY}@${DEST_DIGEST}"
+
+        if [[ "${TRUST_MODE}" == "resign" || "${SIGN_DESTINATION}" == "true" ]]; then
+          echo "Signing destination digest: ${DEST_REF}"
+          cosign sign -y "${DEST_REF}"
+        fi
+
+        if [[ "${VERIFY_DESTINATION}" == "true" ]]; then
+          echo "Verifying destination digest: ${DEST_REF}"
+          verify_ref "${DEST_REF}"
+          echo "verified_destination=true" >> "${GITHUB_OUTPUT}"
+        fi
+
+        echo "destination_ref=${DEST_REF}" >> "${GITHUB_OUTPUT}"
+        echo "destination_digest=${DEST_DIGEST}" >> "${GITHUB_OUTPUT}"
