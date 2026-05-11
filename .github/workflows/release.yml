@@ -1,0 +1,23 @@
+---
+name: "Release"
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+jobs:
+  release:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'release'))
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: github-community-projects/ospo-reusable-workflows/.github/workflows/release.yaml@a0cf79bd8756e0a9c1555bf4975eae7ce7a8e8dc
+    with:
+      publish: true
+      release-config-name: release-drafter.yml
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
