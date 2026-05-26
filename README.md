@@ -6,7 +6,7 @@ and ORAS to push a root Gemara YAML (Policy, Catalog, or Guidance) as an OCI bun
 
 | Phase | What it does |
 |--------|----------------|
-| **1 — Publish** | Assemble dependencies, pack into OCI bundle, push to **source** registry via go-gemara + ORAS. |
+| **1 — Publish** | Validate (`gemara.Load` + `cue vet` against authoritative CUE schemas), assemble dependencies, pack into OCI bundle, push to **source** registry via go-gemara + ORAS. |
 | **2 — Trust (source)** | Optional keyless **cosign** sign/verify on the **source** digest. |
 | **3 — Promote (optional)** | Optional **ORAS** copy to a **destination** registry with `trust_mode`. |
 | **4 — Trust (destination)** | Optional sign/verify on the **destination** digest when promotion and flags request it. |
@@ -58,7 +58,7 @@ Reusable **workflows** can set `concurrency:`, `environment:`, and `if: github.r
 | `file` | Root Gemara artifact YAML (Policy, Catalog, or Guidance). **Required.** |
 | `registry`, `repository`, `tag` | Source destination for publish. |
 | `username`, `password` | Source registry auth. |
-| `validate` | Run `gemara.Load` schema validation before assemble (`"true"` / `"false"`). |
+| `validate` | Run `gemara.Load` and `cue vet` schema validation before assemble (`"true"` / `"false"`). |
 | `bundle_version` | Bundle format version (default `"1"`). |
 | `working_directory` | Working directory relative to repo root for resolving `file`. |
 | `sign_source`, `verify_source` | Source signature controls. |
