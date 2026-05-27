@@ -36,7 +36,9 @@ inputs:
     description: Registry token
     required: true
   validate:
-    description: Run gemara.Load schema validation before assemble
+    description: >-
+      Run gemara.Load schema validation and cue vet against the authoritative
+      Gemara CUE schemas before assemble.
     required: false
     default: "true"
   bundle_version:
@@ -193,6 +195,43 @@ runs:
       with:
         go-version-file: ${{ github.action_path }}/cmd/grc/go.mod
         cache-dependency-path: ${{ github.action_path }}/cmd/grc/go.sum
+
+    - name: Setup CUE
+      if: inputs.validate == 'true'
+      uses: cue-lang/setup-cue@a93fa358375740cd8b0078f76355512b9208acb1 # v1.0.1
+      with:
+        version: latest
+
+    - name: CUE schema validation
+      if: inputs.validate == 'true'
+      shell: bash
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        INPUT_FILE: ${{ inputs.file }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
+        FILE="$(realpath "${INPUT_FILE}")"
+
+        TYPE=$(yq -r '.metadata.type' "$FILE" 2>/dev/null || true)
+        if [[ -z "$TYPE" ]]; then
+          echo "::error::Could not detect metadata.type in ${INPUT_FILE}"
+          exit 1
+        fi
+
+        case "$TYPE" in
+          Policy)           CUE_DEF="#Policy" ;;
+          ControlCatalog)   CUE_DEF="#ControlCatalog" ;;
+          GuidanceCatalog)  CUE_DEF="#GuidanceCatalog" ;;
+          *)
+            echo "::warning::Unknown Gemara type '${TYPE}' — skipping CUE validation"
+            exit 0
+            ;;
+        esac
+
+        echo "CUE validate: ${INPUT_FILE} as ${CUE_DEF}"
+        cue vet -c -d "${CUE_DEF}" github.com/gemaraproj/gemara@latest "$FILE"
+        echo "CUE validation passed for ${INPUT_FILE}"
 
     - name: Publish
       id: publish
