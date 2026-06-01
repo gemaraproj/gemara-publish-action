@@ -1,4 +1,4 @@
-module github.com/gemaraproj/gemara-registry-cli/cmd/grc
+module github.com/gemaraproj/gemara-publish-action/cmd/grc
 
 go 1.25.0
 

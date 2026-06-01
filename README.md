@@ -1,4 +1,4 @@
-# gemara-registry-cli
+# gemara-publish-action
 
 GitHub Action for Gemara OCI publish and trust orchestration. Uses the
 [go-gemara](https://github.com/gemaraproj/go-gemara) bundle SDK (`Assemble` + `Pack`)
@@ -95,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: publish
-        uses: gemaraproj/gemara-registry-cli@<pinned-sha>
+        uses: gemaraproj/gemara-publish-action@<pinned-sha>
         with:
           registry: ghcr.io
           repository: ${{ github.repository }}
