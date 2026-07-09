@@ -67,6 +67,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	for _, w := range b.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+
 	// Pack into an in-memory OCI store.
 	store := memory.New()
 	desc, err := bundle.Pack(ctx, store, b)
