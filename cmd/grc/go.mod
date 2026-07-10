@@ -5,8 +5,8 @@ go 1.25.0
 toolchain go1.25.8
 
 require (
-	github.com/gemaraproj/go-gemara v0.7.0
-	oras.land/oras-go/v2 v2.6.0
+	github.com/gemaraproj/go-gemara v0.8.0
+	oras.land/oras-go/v2 v2.6.1
 )
 
 require (
