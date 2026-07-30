@@ -251,13 +251,11 @@ runs:
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
         FILE="$(realpath "${INPUT_FILE}")"
-        ROOT_DIR="$(dirname "$FILE")"
         VALIDATE_FLAG=""
         if [[ "${INPUT_VALIDATE}" != "true" ]]; then
           VALIDATE_FLAG="-validate=false"
         fi
         go build -C "${ACTION_PATH}/cmd/grc" -o "${RUNNER_TEMP}/grc" .
-        cd "$ROOT_DIR"
         "${RUNNER_TEMP}/grc" \
           -registry="${INPUT_REGISTRY}" \
           -repository="${INPUT_REPOSITORY}" \
