@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command publish uses the go-gemara bundle SDK (Assemble → Pack) and
-// oras.Copy to push a Gemara artifact to an OCI registry. The caller
-// (action.yml) MUST run this program from the root file's parent
-// directory so relative mapping-reference URLs resolve correctly.
+// oras.Copy to push a Gemara artifact to an OCI registry.
 package main
 
 import (
@@ -57,10 +55,11 @@ func main() {
 	}
 
 	// Assemble: walk imports/mapping-references, fetch dependencies.
-	// CWD must be the root file's directory for relative url: paths.
+	// BasePath anchors relative file:// URIs and bare paths to the
+	// root file's directory, removing the need for a cd workaround.
 	src := bundle.File{Name: filepath.Base(*file), Data: data}
 	m := bundle.Manifest{BundleVersion: *bundleVersion, GemaraVersion: *gemaraVersion}
-	asm := bundle.NewAssembler(&fetcher.File{})
+	asm := bundle.NewAssembler(&fetcher.URI{BasePath: filepath.Dir(*file)})
 	b, err := asm.Assemble(ctx, m, src)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "assemble: %v\n", err)
