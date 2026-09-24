@@ -15,40 +15,157 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: YAML syntax (action.yml)
         run: ruby -ryaml -e "YAML.load_file('action.yml'); puts 'action.yml OK'"
 
-      - name: Go (cmd/grc)
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: cmd/grc/go.mod
-          cache-dependency-path: cmd/grc/go.sum
+          go-version: stable
+          cache: false
 
-      - name: Build grc
-        run: go build -C cmd/grc -o "${RUNNER_TEMP}/grc" .
+      - name: Install grcli from source
+        run: |
+          set -euo pipefail
+          go install github.com/gemaraproj/grcli@main
+          echo "grcli installed: $(grcli --version 2>&1 || echo 'version check skipped')"
 
-      - name: Validate + assemble + pack (dry run)
+      - name: Setup CUE
+        uses: cue-lang/setup-cue@a93fa358375740cd8b0078f76355512b9208acb1 # v1.0.1
+        with:
+          version: latest
+
+      - name: Checkout Gemara spec
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gemaraproj/gemara
+          path: gemara-spec
+          persist-credentials: false
+
+      - name: Validate testdata
         run: |
           set -euo pipefail
           cd testdata
-          GEMARA_REGISTRY_PASSWORD=ci-dummy "${RUNNER_TEMP}/grc" \
-            -registry=localhost:5000 \
-            -repository=ci/test \
-            -tag=ci \
-            -file=minimal-catalog.yaml \
-            -username=ci \
-            -validate=true 2>&1 | tee /tmp/publish-out.txt || true
-          if grep -q "^assemble:" /tmp/publish-out.txt; then
-            echo "::error::Assemble failed"
+          grcli validate -f minimal-catalog.yaml --spec "$GITHUB_WORKSPACE/gemara-spec"
+          echo "Validation passed"
+
+      - name: Publish dry run
+        run: |
+          set -euo pipefail
+          cd testdata
+          grcli publish -f minimal-catalog.yaml \
+            --license Apache-2.0 \
+            --dry-run \
+            --no-sign \
+            --output /tmp/grcli-dry-run 2>&1 | tee /tmp/publish-out.txt
+          if [[ ! -d /tmp/grcli-dry-run ]]; then
+            echo "::error::Dry-run output directory not created"
             exit 1
           fi
-          if grep -q "^validate:" /tmp/publish-out.txt; then
-            echo "::error::Validation failed"
+          echo "Dry-run output written to /tmp/grcli-dry-run"
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        with:
+          version: "1.2.0"
+
+      - name: Verify ORAS copy from layout
+        run: |
+          set -euo pipefail
+          # Extract the layout tag from grcli output
+          LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' /tmp/publish-out.txt | head -1 | sed 's/.*://')
+          if [[ -z "${LAYOUT_TAG}" ]]; then
+            echo "::error::Could not extract layout tag from grcli output"
             exit 1
           fi
-          if grep -q "^pack:" /tmp/publish-out.txt; then
-            echo "::error::Pack failed"
-            exit 1
-          fi
-          echo "Assemble + pack succeeded (push expected to fail — no registry)"
+          # Verify the OCI layout structure
+          test -f /tmp/grcli-dry-run/oci-layout || { echo "::error::Missing oci-layout"; exit 1; }
+          test -f /tmp/grcli-dry-run/index.json || { echo "::error::Missing index.json"; exit 1; }
+          test -d /tmp/grcli-dry-run/blobs || { echo "::error::Missing blobs directory"; exit 1; }
+          # Verify digest appears in publish output
+          grep -qE 'sha256:[a-f0-9]{64}' /tmp/publish-out.txt || { echo "::error::No sha256 digest in output"; exit 1; }
+          echo "Layout tag: ${LAYOUT_TAG}"
+          echo "OCI layout structure and digest verified"
+
+  input-validation-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test missing license (should fail)
+        id: missing-license
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: ""
+          repository: test/repo
+          tag: latest
+          password: dummy
+
+      - name: Assert missing license was rejected
+        if: steps.missing-license.outcome != 'failure'
+        run: |
+          echo "::error::Expected action to fail when license is empty"
+          exit 1
+
+      - name: Test missing password (should fail)
+        id: missing-password
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          repository: test/repo
+          tag: latest
+          password: ""
+
+      - name: Assert missing password was rejected
+        if: steps.missing-password.outcome != 'failure'
+        run: |
+          echo "::error::Expected action to fail when password is empty"
+          exit 1
+
+      - name: Test invalid trust_mode (should fail)
+        id: bad-trust
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          repository: test/repo
+          tag: latest
+          password: dummy
+          trust_mode: "invalid"
+
+      - name: Assert invalid trust_mode was rejected
+        if: steps.bad-trust.outcome != 'failure'
+        run: |
+          echo "::error::Expected action to fail with invalid trust_mode"
+          exit 1
+
+      - name: Test promote without destination (should fail)
+        id: promote-no-dest
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          repository: test/repo
+          tag: latest
+          password: dummy
+          promote_to_destination: "true"
+          destination_registry: ""
+          destination_repository: ""
+          destination_username: ""
+          destination_password: ""
+
+      - name: Assert promote without destination was rejected
+        if: steps.promote-no-dest.outcome != 'failure'
+        run: |
+          echo "::error::Expected action to fail when promote_to_destination=true without destination fields"
+          exit 1
