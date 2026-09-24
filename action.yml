@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Phases: (1) assemble + pack + push via go-gemara, (2) keyless sign/verify on source,
-# (3) optional promote, (4) sign/verify on destination. This action does not generate
-# SLSA or SBOM attestations—callers add those in separate workflow steps or reusables.
+# Phases: (1) validate via grcli, (2) assemble + pack via grcli dry-run, push via ORAS,
+# (3) keyless sign/verify on source, (4) optional promote, (5) sign/verify on destination.
+# This action does not generate SLSA or SBOM attestations—callers add those in separate
+# workflow steps or reusables. grcli packs SLSA provenance into the bundle manifest.
 # See README: boundaries, and caller patterns (concurrency, ref gates, environments).
 name: Publish Gemara OCI bundle
 description: >-
-  Assemble a root Gemara YAML into an OCI bundle, push to a registry, sign/verify,
-  and optionally promote to a second registry. Uses go-gemara bundle SDK internally.
+  Assemble a root Gemara YAML into an OCI bundle via grcli, push to any registry
+  via ORAS, sign/verify with cosign, and optionally promote to a second registry.
   Boolean flags use the strings "true" / "false".
 
 branding:
@@ -28,6 +29,12 @@ inputs:
   file:
     description: Root Gemara artifact YAML (Policy, Catalog, or Guidance), relative to working_directory
     required: true
+  license:
+    description: >-
+      SPDX license expression for the published artifact (e.g. Apache-2.0).
+      Required by grcli for bundle packing. Stamped as the
+      org.opencontainers.image.licenses OCI annotation.
+    required: true
   username:
     description: Registry user
     required: false
@@ -37,10 +44,16 @@ inputs:
     required: true
   validate:
     description: >-
-      Run gemara.Load schema validation and cue vet against the authoritative
-      Gemara CUE schemas before assemble.
+      Run grcli validate (cue vet against the authoritative Gemara CUE schemas)
+      before publish. Requires cue on PATH and a Gemara spec checkout (gemara_spec_dir).
     required: false
     default: "true"
+  gemara_spec_dir:
+    description: >-
+      Path to a local Gemara spec checkout for grcli validate --spec.
+      Required when validate is true.
+    required: false
+    default: ""
   bundle_version:
     description: Bundle format version
     required: false
@@ -49,6 +62,12 @@ inputs:
     description: Working directory (relative to repo root) for resolving the file input
     required: false
     default: "."
+  grcli_version:
+    description: >-
+      grcli release tag to install (e.g. v0.1.0). Pin to a release tag for
+      reproducible builds.
+    required: false
+    default: "v0.1.0"
   oras_version:
     description: ORAS CLI version (no v prefix)
     required: false
@@ -147,8 +166,10 @@ runs:
       shell: bash
       env:
         FILE: ${{ inputs.file }}
+        LICENSE: ${{ inputs.license }}
         PASSWORD: ${{ inputs.password }}
         PROMOTE: ${{ inputs.promote_to_destination }}
+        DEST_REGISTRY: ${{ inputs.destination_registry }}
         DEST_REPOSITORY: ${{ inputs.destination_repository }}
         DEST_USERNAME: ${{ inputs.destination_username }}
         DEST_PASSWORD: ${{ inputs.destination_password }}
@@ -157,6 +178,10 @@ runs:
         set -euo pipefail
         if [[ -z "${FILE}" ]]; then
           echo "::error::file input is required"
+          exit 1
+        fi
+        if [[ -z "${LICENSE}" ]]; then
+          echo "::error::license input is required (SPDX expression, e.g. Apache-2.0)"
           exit 1
         fi
         if [[ -z "${PASSWORD}" ]]; then
@@ -171,8 +196,8 @@ runs:
             ;;
         esac
         if [[ "${PROMOTE}" == "true" ]]; then
-          if [[ -z "${DEST_REPOSITORY}" || -z "${DEST_USERNAME}" || -z "${DEST_PASSWORD}" ]]; then
-            echo "::error::destination_repository, destination_username, and destination_password are required when promote_to_destination=true"
+          if [[ -z "${DEST_REGISTRY}" || -z "${DEST_REPOSITORY}" || -z "${DEST_USERNAME}" || -z "${DEST_PASSWORD}" ]]; then
+            echo "::error::destination_registry, destination_repository, destination_username, and destination_password are required when promote_to_destination=true"
             exit 1
           fi
         fi
@@ -190,80 +215,112 @@ runs:
       with:
         cosign-release: ${{ inputs.cosign_version }}
 
-    - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version-file: ${{ github.action_path }}/cmd/grc/go.mod
-        cache-dependency-path: ${{ github.action_path }}/cmd/grc/go.sum
+    - name: Install grcli
+      shell: bash
+      env:
+        GRCLI_VERSION: ${{ inputs.grcli_version }}
+      run: |
+        set -euo pipefail
+        # Detect runner platform
+        ARCH="$(uname -m)"
+        case "${ARCH}" in
+          x86_64)  PLATFORM="linux/amd64" ;;
+          aarch64) PLATFORM="linux/arm64" ;;
+          *)
+            echo "::error::Unsupported runner architecture: ${ARCH}. grcli supports linux/amd64 and linux/arm64."
+            exit 1
+            ;;
+        esac
+        echo "Installing grcli ${GRCLI_VERSION} for ${PLATFORM}..."
+        GRCLI_REF="ghcr.io/gemaraproj/grcli:${GRCLI_VERSION}"
+        for attempt in 1 2 3; do
+          if timeout 60 oras pull "${GRCLI_REF}" --platform "${PLATFORM}"; then
+            break
+          fi
+          if [[ "${attempt}" -eq 3 ]]; then
+            echo "::error::Failed to pull grcli from ${GRCLI_REF} after 3 attempts"
+            exit 1
+          fi
+          echo "::warning::grcli pull attempt ${attempt} failed, retrying in $((attempt * 10))s..."
+          sleep $((attempt * 10))
+        done
+        sudo install grcli /usr/local/bin/grcli
+        rm -f grcli
+        echo "grcli installed: $(grcli --version 2>&1 || echo 'version check skipped')"
 
-    - name: Setup CUE
-      if: inputs.validate == 'true'
-      uses: cue-lang/setup-cue@a93fa358375740cd8b0078f76355512b9208acb1 # v1.0.1
-      with:
-        version: latest
-
-    - name: CUE schema validation
+    - name: Validate
       if: inputs.validate == 'true'
       shell: bash
       env:
         INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
         INPUT_FILE: ${{ inputs.file }}
+        GRCLI_SPEC_DIR: ${{ inputs.gemara_spec_dir }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
         FILE="$(realpath "${INPUT_FILE}")"
-
-        TYPE=$(yq -r '.metadata.type' "$FILE" 2>/dev/null || true)
-        if [[ -z "$TYPE" ]]; then
-          echo "::error::Could not detect metadata.type in ${INPUT_FILE}"
-          exit 1
+        VALIDATE_ARGS=(-f "$FILE")
+        if [[ -n "${GRCLI_SPEC_DIR}" ]]; then
+          VALIDATE_ARGS+=(--spec "${GRCLI_SPEC_DIR}")
         fi
-
-        case "$TYPE" in
-          Policy)           CUE_DEF="#Policy" ;;
-          ControlCatalog)   CUE_DEF="#ControlCatalog" ;;
-          GuidanceCatalog)  CUE_DEF="#GuidanceCatalog" ;;
-          *)
-            echo "::warning::Unknown Gemara type '${TYPE}' — skipping CUE validation"
-            exit 0
-            ;;
-        esac
-
-        echo "CUE validate: ${INPUT_FILE} as ${CUE_DEF}"
-        cue vet -c -d "${CUE_DEF}" github.com/gemaraproj/gemara@latest "$FILE"
-        echo "CUE validation passed for ${INPUT_FILE}"
+        echo "Validating: ${INPUT_FILE}"
+        grcli validate "${VALIDATE_ARGS[@]}"
+        echo "Validation passed for ${INPUT_FILE}"
 
     - name: Publish
       id: publish
       shell: bash
       env:
-        GEMARA_REGISTRY_PASSWORD: ${{ inputs.password }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working_directory }}
         INPUT_FILE: ${{ inputs.file }}
-        INPUT_VALIDATE: ${{ inputs.validate }}
+        INPUT_LICENSE: ${{ inputs.license }}
+        INPUT_TAG: ${{ inputs.tag }}
         INPUT_REGISTRY: ${{ inputs.registry }}
         INPUT_REPOSITORY: ${{ inputs.repository }}
-        INPUT_TAG: ${{ inputs.tag }}
         INPUT_USERNAME: ${{ inputs.username }}
-        INPUT_BUNDLE_VERSION: ${{ inputs.bundle_version }}
-        ACTION_PATH: ${{ github.action_path }}
+        INPUT_PASSWORD: ${{ inputs.password }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
         FILE="$(realpath "${INPUT_FILE}")"
-        VALIDATE_FLAG=""
-        if [[ "${INPUT_VALIDATE}" != "true" ]]; then
-          VALIDATE_FLAG="-validate=false"
+
+        # Phase 1: Pack the bundle locally via grcli dry-run.
+        # grcli assembles dependencies, adds SLSA provenance, and writes
+        # an OCI layout to disk. The tag in the layout is metadata.version
+        # (or --version once grcli supports it).
+        LAYOUT_DIR="${RUNNER_TEMP}/grcli-bundle"
+        rm -rf "${LAYOUT_DIR}"
+
+        PUBLISH_ARGS=(-f "$FILE" --license "${INPUT_LICENSE}" --dry-run --no-sign --output "${LAYOUT_DIR}")
+        echo "Packing bundle: ${INPUT_FILE}"
+        grcli publish "${PUBLISH_ARGS[@]}" 2>&1 | tee "${RUNNER_TEMP}/grcli-publish-out.txt"
+
+        # Extract the layout tag from grcli output (metadata.version).
+        LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://')
+        if [[ -z "${LAYOUT_TAG}" ]]; then
+          echo "::error::Could not determine layout tag from grcli output"
+          cat "${RUNNER_TEMP}/grcli-publish-out.txt"
+          exit 1
         fi
-        go build -C "${ACTION_PATH}/cmd/grc" -o "${RUNNER_TEMP}/grc" .
-        "${RUNNER_TEMP}/grc" \
-          -registry="${INPUT_REGISTRY}" \
-          -repository="${INPUT_REPOSITORY}" \
-          -tag="${INPUT_TAG}" \
-          -file="$FILE" \
-          -username="${INPUT_USERNAME}" \
-          -bundle-version="${INPUT_BUNDLE_VERSION}" \
-          ${VALIDATE_FLAG}
+        echo "Layout tag: ${LAYOUT_TAG}"
+
+        # Phase 2: Push the OCI layout to the caller's registry via ORAS.
+        # The caller controls the registry tag independently of metadata.version.
+        DEST_REF="${INPUT_REGISTRY}/${INPUT_REPOSITORY}:${INPUT_TAG}"
+        source_user="${INPUT_USERNAME:-${GITHUB_ACTOR:-oauth2}}"
+        echo "${INPUT_PASSWORD}" | oras login "${INPUT_REGISTRY}" -u "${source_user}" --password-stdin
+
+        echo "Pushing to ${DEST_REF}"
+        oras copy --from-oci-layout "${LAYOUT_DIR}:${LAYOUT_TAG}" "${DEST_REF}" 2>&1
+
+        # Resolve the pushed digest
+        DIGEST="$(oras resolve "${DEST_REF}" | tr -d '\r\n')"
+        if [[ -z "${DIGEST}" ]]; then
+          echo "::error::Failed to resolve digest for ${DEST_REF}"
+          exit 1
+        fi
+        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+        echo "Published ${DEST_REF} (digest: ${DIGEST})"
 
     - name: Sign, verify, and optionally promote to destination registry
       id: finalize
