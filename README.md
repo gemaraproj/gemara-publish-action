@@ -62,7 +62,7 @@ manifest shape, and Pack/Assemble. This action owns transport and trust.
 | `repository` | Optional override for `grcli publish --repository`. | Hub |
 | `validate` | Run `grcli validate` before publish. | Both |
 | `gemara_spec_dir` | Path to local Gemara spec checkout for validation. | Both |
-| `grcli_version` | grcli release tag to install (default `v0.1.0`). | Both |
+| `grcli_version` | grcli release tag to install (default `v0.2.0`). | Both |
 | `sign_source`, `verify_source` | Source signature controls. | Direct |
 | `promote_to_destination` | Enable promotion to `destination_*`. | Both |
 | `destination_*` | Destination coordinates and credentials. | Both |

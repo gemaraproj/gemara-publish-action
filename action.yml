@@ -92,10 +92,10 @@ inputs:
     default: "."
   grcli_version:
     description: >-
-      grcli release tag to install (e.g. v0.1.0). Pin to a release tag for
+      grcli release tag to install (e.g. v0.2.0). Pin to a release tag for
       reproducible builds.
     required: false
-    default: "v0.1.0"
+    default: "v0.2.0"
   grcli_url:
     description: >-
       Hub base URL for grcli commands (e.g. https://hub.grc.store). When set,
