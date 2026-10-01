@@ -57,8 +57,9 @@ and verify destination trust with the same workflow identity constraints.
 - **Missing or invalid root YAML:** `grcli validate` fails before publish.
 - **Missing license:** Fail with a clear error (grcli requires `--license`).
 - **Missing password:** Fail with a clear error.
-- **Missing metadata.version:** grcli requires this field for packing. A `--version` CLI
-  fallback is tracked at [gemaraproj/grcli#3](https://github.com/gemaraproj/grcli/issues/3).
+- **Missing metadata.version:** grcli requires this field for packing. The `--version`
+  CLI flag ([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)) stamps a
+  value from the command line; the action exposes this as the optional `version` input.
 - **Digest resolution:** Use `oras resolve` on source/destination references and fail fast.
 - **Username default:** `GITHUB_ACTOR` when username omitted.
 

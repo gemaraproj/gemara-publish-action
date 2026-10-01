@@ -74,6 +74,62 @@ jobs:
           print('Manifest structure verified')
           "
 
+  version-flag:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish versionless catalog with version input
+        id: publish
+        uses: ./
+        with:
+          file: testdata/minimal-catalog-no-version.yaml
+          license: Apache-2.0
+          version: "0.1.0-test"
+          registry: localhost:5000
+          repository: test/catalog-versioned
+          tag: v0.1.0-test
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+
+      - name: Verify outputs
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          SOURCE_REF: ${{ steps.publish.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DIGEST}" || ! "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Invalid digest: ${DIGEST}"
+            exit 1
+          fi
+          if [[ "${SOURCE_REF}" != "localhost:5000/test/catalog-versioned@${DIGEST}" ]]; then
+            echo "::error::source_ref mismatch: got ${SOURCE_REF}"
+            exit 1
+          fi
+          echo "Version-flag outputs verified"
+
+      - name: Verify manifest has correct version in config
+        run: |
+          set -euo pipefail
+          oras manifest fetch localhost:5000/test/catalog-versioned:v0.1.0-test | python3 -c "
+          import sys, json
+          m = json.load(sys.stdin)
+          assert m['artifactType'] == 'application/vnd.gemara.bundle.v1', f'bad artifactType: {m[\"artifactType\"]}'
+          assert len(m['layers']) > 0, 'no layers'
+          assert 'Apache-2.0' in m.get('annotations', {}).get('org.opencontainers.image.licenses', ''), 'missing license'
+          print('Version-flag manifest verified')
+          "
+
   input-validation:
     runs-on: ubuntu-latest
     steps:

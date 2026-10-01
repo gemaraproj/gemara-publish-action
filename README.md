@@ -32,6 +32,7 @@ manifest shape, and Pack/Assemble. This action owns transport and trust.
 |-------|-------------|
 | `file` | Root Gemara artifact YAML. **Required.** |
 | `license` | SPDX license expression (e.g. `Apache-2.0`). **Required (new).** |
+| `version` | Artifact version stamped into `metadata.version` before packing (optional). |
 | `registry`, `repository`, `tag` | Source destination for publish. |
 | `username`, `password` | Source registry auth. |
 | `validate` | Run `grcli validate` before publish (`"true"` / `"false"`). |
@@ -97,9 +98,10 @@ All other inputs and outputs are unchanged. Existing callers need only add
 `license: <spdx-expression>` to their `with:` block.
 
 **Note:** `metadata.version` must be present in the artifact YAML for grcli
-to pack the bundle. If your artifacts lack this field, track
-[gemaraproj/grcli#3](https://github.com/gemaraproj/grcli/issues/3) for a
-`--version` CLI fallback.
+to pack the bundle. If your artifacts lack this field, set the `version`
+input — the action passes it as `--version` to grcli, which stamps it into
+the bundle's `metadata.version` before packing
+([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)).
 
 ## Repository layout
 

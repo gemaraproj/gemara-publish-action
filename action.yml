@@ -54,6 +54,13 @@ inputs:
       Required when validate is true.
     required: false
     default: ""
+  version:
+    description: >-
+      Artifact version stamped into the bundle's metadata.version before
+      packing (overrides the file's value). Passed as --version to grcli.
+      Required when the artifact YAML omits metadata.version.
+    required: false
+    default: ""
   bundle_version:
     description: Bundle format version
     required: false
@@ -279,6 +286,7 @@ runs:
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_USERNAME: ${{ inputs.username }}
         INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
@@ -287,20 +295,28 @@ runs:
         # Phase 1: Pack the bundle locally via grcli dry-run.
         # grcli assembles dependencies, adds SLSA provenance, and writes
         # an OCI layout to disk. The tag in the layout is metadata.version
-        # (or --version once grcli supports it).
+        # (or --version, supported since grcli PR #4).
         LAYOUT_DIR="${RUNNER_TEMP}/grcli-bundle"
         rm -rf "${LAYOUT_DIR}"
 
         PUBLISH_ARGS=(-f "$FILE" --license "${INPUT_LICENSE}" --dry-run --no-sign --output "${LAYOUT_DIR}")
+        if [[ -n "${INPUT_VERSION}" ]]; then
+          PUBLISH_ARGS+=(--version "${INPUT_VERSION}")
+        fi
         echo "Packing bundle: ${INPUT_FILE}"
         grcli publish "${PUBLISH_ARGS[@]}" 2>&1 | tee "${RUNNER_TEMP}/grcli-publish-out.txt"
 
-        # Extract the layout tag from grcli output (metadata.version).
-        LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://')
-        if [[ -z "${LAYOUT_TAG}" ]]; then
-          echo "::error::Could not determine layout tag from grcli output"
-          cat "${RUNNER_TEMP}/grcli-publish-out.txt"
-          exit 1
+        # When --version is set the layout tag is known; otherwise extract
+        # it from grcli output (metadata.version).
+        if [[ -n "${INPUT_VERSION}" ]]; then
+          LAYOUT_TAG="${INPUT_VERSION}"
+        else
+          LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://')
+          if [[ -z "${LAYOUT_TAG}" ]]; then
+            echo "::error::Could not determine layout tag from grcli output"
+            cat "${RUNNER_TEMP}/grcli-publish-out.txt"
+            exit 1
+          fi
         fi
         echo "Layout tag: ${LAYOUT_TAG}"
 

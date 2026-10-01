@@ -49,8 +49,8 @@ Go CLI with grcli.
   Callers who want Sigstore bundle referrers (vs cosign `.sig` tags) need
   grcli to support direct registry push (tracked as a future enhancement).
 - `metadata.version` is required by grcli for packing. Callers whose
-  artifacts lack it need the `--version` flag (gemaraproj/grcli#3) or must
-  add the field to their YAML.
+  artifacts lack it can set the action's `version` input, which passes
+  `--version` to grcli ([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)).
 - Two-step publish (grcli dry-run + ORAS copy) is more complex internally
   than the old single-step `grc` CLI.
 
