@@ -11,7 +11,7 @@
 # Both modes: (1) validate via grcli, (2) publish, (3) optional promote,
 # (4) sign/verify on destination.
 # grcli packs SLSA provenance into the bundle manifest in both modes.
-# See README: boundaries, and caller patterns (concurrency, ref gates, environments).
+# See README: boundaries (what is not in this action).
 name: Publish Gemara OCI bundle
 description: >-
   Assemble a root Gemara YAML into an OCI bundle via grcli. In direct mode
@@ -72,7 +72,8 @@ inputs:
   gemara_spec_dir:
     description: >-
       Path to a local Gemara spec checkout for grcli validate --spec.
-      Required when validate is true.
+      Recommended when validate is true; omit only if grcli can locate
+      the spec on its own.
     required: false
     default: ""
   version:
@@ -83,9 +84,12 @@ inputs:
     required: false
     default: ""
   bundle_version:
-    description: Bundle format version
+    description: >-
+      Deprecated: no longer consumed. Was used by the old cmd/grc CLI.
+      Retained for backward compatibility; will be removed in a future release.
     required: false
     default: "1"
+    deprecationMessage: "bundle_version is no longer consumed and will be removed in a future release."
   working_directory:
     description: Working directory (relative to repo root) for resolving the file input
     required: false
@@ -281,37 +285,9 @@ runs:
         cosign-release: ${{ inputs.cosign_version }}
 
     - name: Install grcli
-      shell: bash
-      env:
-        GRCLI_VERSION: ${{ inputs.grcli_version }}
-      run: |
-        set -euo pipefail
-        # Detect runner platform
-        ARCH="$(uname -m)"
-        case "${ARCH}" in
-          x86_64)  PLATFORM="linux/amd64" ;;
-          aarch64) PLATFORM="linux/arm64" ;;
-          *)
-            echo "::error::Unsupported runner architecture: ${ARCH}. grcli supports linux/amd64 and linux/arm64."
-            exit 1
-            ;;
-        esac
-        echo "Installing grcli ${GRCLI_VERSION} for ${PLATFORM}..."
-        GRCLI_REF="ghcr.io/gemaraproj/grcli:${GRCLI_VERSION}"
-        for attempt in 1 2 3; do
-          if timeout 60 oras pull "${GRCLI_REF}" --platform "${PLATFORM}"; then
-            break
-          fi
-          if [[ "${attempt}" -eq 3 ]]; then
-            echo "::error::Failed to pull grcli from ${GRCLI_REF} after 3 attempts"
-            exit 1
-          fi
-          echo "::warning::grcli pull attempt ${attempt} failed, retrying in $((attempt * 10))s..."
-          sleep $((attempt * 10))
-        done
-        sudo install grcli /usr/local/bin/grcli
-        rm -f grcli
-        echo "grcli installed: $(grcli --version 2>&1 || echo 'version check skipped')"
+      uses: gemaraproj/grcli/.github/actions/install@fd1da672bae6d3bca96d2f8cd46ee89369113707 # v0.2.0
+      with:
+        version: ${{ inputs.grcli_version }}
 
     - name: Validate
       if: inputs.validate == 'true'
@@ -323,6 +299,11 @@ runs:
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
+        RESOLVED_DIR="$(pwd -P)"
+        if [[ "${RESOLVED_DIR}" != "${GITHUB_WORKSPACE}"* ]]; then
+          echo "::error::working_directory resolves outside the workspace"
+          exit 1
+        fi
         FILE="$(realpath "${INPUT_FILE}")"
         VALIDATE_ARGS=(-f "$FILE")
         if [[ -n "${GRCLI_SPEC_DIR}" ]]; then
@@ -351,6 +332,11 @@ runs:
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
+        RESOLVED_DIR="$(pwd -P)"
+        if [[ "${RESOLVED_DIR}" != "${GITHUB_WORKSPACE}"* ]]; then
+          echo "::error::working_directory resolves outside the workspace"
+          exit 1
+        fi
         FILE="$(realpath "${INPUT_FILE}")"
 
         if [[ -n "${GRCLI_URL}" ]]; then
@@ -510,6 +496,7 @@ runs:
           if [[ -n "${REPOSITORY}" ]]; then
             echo "source_ref=${REPOSITORY}@${SOURCE_DIGEST}" >> "${GITHUB_OUTPUT}"
           else
+            echo "::warning::Hub mode without repository input — source_ref is digest-only (@${SOURCE_DIGEST}) and not a pullable OCI reference."
             echo "source_ref=@${SOURCE_DIGEST}" >> "${GITHUB_OUTPUT}"
           fi
         else

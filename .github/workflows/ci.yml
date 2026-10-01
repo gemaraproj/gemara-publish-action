@@ -21,29 +21,15 @@ jobs:
       - name: YAML syntax (action.yml)
         run: ruby -ryaml -e "YAML.load_file('action.yml'); puts 'action.yml OK'"
 
-      - name: Install ORAS
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
-        with:
-          version: "1.2.0"
-
       - name: Install grcli
-        run: |
-          set -euo pipefail
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64)  PLATFORM="linux/amd64" ;;
-            aarch64) PLATFORM="linux/arm64" ;;
-            *)       echo "::error::Unsupported arch: ${ARCH}"; exit 1 ;;
-          esac
-          oras pull "ghcr.io/gemaraproj/grcli:v0.1.0" --platform "${PLATFORM}"
-          sudo install grcli /usr/local/bin/grcli
-          rm -f grcli
-          grcli --version 2>&1 || echo "version check skipped"
+        uses: gemaraproj/grcli/.github/actions/install@fd1da672bae6d3bca96d2f8cd46ee89369113707 # v0.2.0
+        with:
+          version: v0.2.0
 
       - name: Setup CUE
         uses: cue-lang/setup-cue@a93fa358375740cd8b0078f76355512b9208acb1 # v1.0.1
         with:
-          version: latest
+          version: "0.15.1"
 
       - name: Checkout Gemara spec
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
