@@ -15,7 +15,7 @@ structured outputs.
 **Key metadata**
 
 - **Action definition:** `action.yml` (composite)
-- **Related design:** [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/adr/](../../docs/adr/)
+- **Related design:** [docs/adr/](../../docs/adr/)
 
 **Scope boundary:** This repository owns transport and trust orchestration. Bundle packing,
 provenance, and schema validation are delegated to
