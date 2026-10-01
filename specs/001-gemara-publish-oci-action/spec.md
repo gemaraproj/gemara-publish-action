@@ -3,8 +3,14 @@
 ## Document overview
 
 This specification describes the **composite** GitHub Action shipped from this repository
-(`action.yml`): pack a root Gemara YAML into an OCI bundle via grcli, push to any OCI
-registry via ORAS, sign/verify with cosign, and optionally promote to a second registry.
+(`action.yml`). The action supports two publish modes:
+
+- **Direct mode** (default): pack via `grcli --dry-run`, push to any OCI registry via
+  ORAS, sign/verify with cosign.
+- **Hub mode** (`grcli_url` set): publish through grc.store with in-process signing.
+
+Both modes support optional validation, optional promotion to a second registry, and
+structured outputs.
 
 **Key metadata**
 
@@ -21,11 +27,13 @@ provenance, and schema validation are delegated to
 CI callers need a **small, auditable** Action that:
 
 1. Accepts a root Gemara artifact YAML (Policy, Catalog, or Guidance) and publishes it as an OCI
-   bundle to any registry the caller specifies.
-2. Uses grcli for packing (assembly, SLSA provenance, license validation) without requiring a hub.
-3. Authenticates to the registry using **secrets the workflow supplies**, without echoing tokens.
+   bundle — either to the caller's own registry (direct mode) or through grc.store (hub mode).
+2. Uses grcli for packing (assembly, SLSA provenance, license validation).
+3. Authenticates to the registry using **secrets the workflow supplies** (direct mode) or
+   **OIDC** (hub mode), without echoing tokens.
 4. Optionally validates the YAML against the Gemara CUE schemas via `grcli validate`.
-5. Optionally signs and verifies the published digest with keyless cosign.
+5. Optionally signs and verifies the published digest — with keyless cosign (direct mode) or
+   in-process sigstore-go (hub mode).
 6. Optionally promotes the bundle to a second registry with configurable trust modes.
 7. Emits stable outputs for source/destination refs, digests, and verification state.
 
@@ -33,10 +41,11 @@ CI callers need a **small, auditable** Action that:
 
 ### Priority 1: Full publish orchestration for callers
 
-A maintainer calls the action once with publish settings and trust settings; the action
-packs the bundle via `grcli publish --dry-run`, pushes to the caller's registry via ORAS,
-signs/verifies the source digest with cosign, optionally promotes to a destination registry,
-and returns source/destination outputs.
+A maintainer calls the action once with publish settings and trust settings. In direct
+mode, the action packs the bundle via `grcli publish --dry-run`, pushes to the caller's
+registry via ORAS, and signs/verifies the source digest with cosign. In hub mode, the
+action calls `grcli publish` which handles push and signing through grc.store. Both modes
+optionally promote to a destination registry and return source/destination outputs.
 
 **Test coverage:** `.github/workflows/ci.yml` installs grcli, runs `grcli validate` and
 `grcli publish --dry-run` against `testdata/minimal-catalog.yaml`, and verifies the OCI
