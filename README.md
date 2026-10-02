@@ -98,8 +98,8 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 | `source_ref` | `registry/repository@sha256:...` (direct) or `repository@sha256:...` (hub). |
 | `destination_digest` | Destination digest after promotion. |
 | `destination_ref` | Destination image reference with digest. |
-| `verified_source` | `true` if source verify passed (direct mode only). |
-| `verified_destination` | `true` if destination verify passed. |
+| `verified_source` | `true` if source verify passed, `skipped` if not attempted. |
+| `verified_destination` | `true` if destination verify passed, `skipped` if not attempted. |
 | `trust_mode` | Effective trust mode used. |
 
 ## Caller examples
@@ -153,47 +153,49 @@ No `registry`, `username`, or `password` needed — grcli authenticates via
 OIDC and pushes to the hub-managed registry. Signing is in-process via
 sigstore-go.
 
-## Migration from embedded grc CLI
-
-| Before (embedded `cmd/grc/`) | After (grcli + ORAS) |
-|------------|-----------|
-| No `license` input | `license` is **required** (SPDX expression) |
-| `cmd/grc/` built from source at runtime | Pre-built grcli binary from GHCR |
-| No provenance in bundles | SLSA provenance embedded by grcli |
-| No license annotation | `org.opencontainers.image.licenses` OCI annotation |
-| `bundle_version` input | Deprecated — no longer consumed, will be removed |
-
-All other inputs and outputs remain backward compatible. Existing direct-mode
-callers need only add `license: <spdx-expression>` to their `with:` block.
-
-### Legacy bundle compatibility
-
-| Tool | Legacy bundle (pre-grcli) | Current bundle (grcli) |
-|------|--------------------------|----------------------|
-| `grcli unpack` | **Pass** with `--no-verify` | Pass |
-| `grcli cat` | **Pass** | Pass |
-| ORAS push/pull | **Pass** — valid OCI layout | Pass |
-
-Legacy bundles (published by the old `cmd/grc/` CLI via `go-gemara`) use the
-same core media types and layer annotations as current bundles but lack SLSA
-provenance, license annotations, and Sigstore signature referrers.
-`grcli unpack --no-verify` and `grcli cat` both work on legacy bundles.
-To upgrade a legacy bundle so it includes provenance and signing, simply
-re-publish the original YAML through the action — a normal publish produces
-a current-format bundle with no special flags needed.
-
-**Note:** `metadata.version` must be present in the artifact YAML for grcli
-to pack the bundle. If your artifacts lack this field, set the `version`
-input — the action passes it as `--version` to grcli, which stamps it into
-the bundle's `metadata.version` before packing
-([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)).
-
 ## Repository layout
 
 - **`action.yml`** — Composite action definition (dual-mode: direct + hub).
+- **`scripts/`** — Shell logic for publish and finalize steps (`lib.sh`, `publish.sh`, `finalize.sh`).
 - **`testdata/`** — Minimal Gemara catalog fixtures and legacy bundle OCI layout for CI tests.
 - **`docs/`** — Architecture documentation and ADRs.
 - **`specs/`** — Feature specifications.
+
+## Migrating from the embedded `grc` CLI
+
+This release replaces the embedded Go CLI (`cmd/grc/`) with
+[grcli](https://github.com/gemaraproj/grcli). Existing callers need one
+change:
+
+```diff
+  uses: gemaraproj/gemara-publish-action@<new-sha>
+  with:
++   license: Apache-2.0          # new required input (SPDX expression)
+    file: governance/policies/my-policy.yaml
+    registry: ghcr.io
+    repository: ${{ github.repository }}
+    tag: latest
+```
+
+### What changed
+
+| Before | After | Action needed |
+|--------|-------|---------------|
+| No `license` input | `license` **required** | Add `license: <SPDX>` to every caller |
+| `bundle_version` input accepted | Deprecated (ignored, will be removed) | Remove `bundle_version` from callers |
+| `password` always required | Required in direct mode only | No change for direct-mode callers |
+| `verified_source` = `false` when not attempted | `verified_source` = `skipped` when not attempted | Update `if:` guards that check `== 'false'` |
+| `verified_destination` = `false` when not attempted | `verified_destination` = `skipped` when not attempted | Update `if:` guards that check `== 'false'` |
+| Go toolchain required at runtime | grcli pre-built binary | None (faster builds) |
+| No SLSA provenance | SLSA provenance embedded by grcli | None (additive) |
+| No license annotation | `org.opencontainers.image.licenses` set | None (additive) |
+
+### Unchanged
+
+All direct-mode inputs (`registry`, `tag`, `username`, `password`,
+`sign_source`, `verify_source`), promotion inputs (`promote_to_destination`,
+`destination_*`, `trust_mode`), and output keys (`digest`, `source_ref`,
+`source_digest`, `destination_ref`, `destination_digest`) work the same way.
 
 ## Pinning
 
