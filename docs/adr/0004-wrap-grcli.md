@@ -65,9 +65,13 @@ source publish.
 **Negative:**
 - In direct mode, source signing remains external cosign, not grcli's
   in-process sigstore-go. Callers who want in-process signing use hub mode.
+- In direct mode, grcli records SLSA provenance at dry-run time (before
+  ORAS pushes), so the provenance `repository` field reflects the local
+  build context, not the push destination. The OCI manifest itself lives
+  at the destination registry.
 - `metadata.version` is required by grcli for packing. Callers whose
   artifacts lack it can set the action's `version` input, which passes
-  `--version` to grcli ([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)).
+  `--version` to grcli.
 - Two publish paths to maintain (direct + hub), though they share
   validation, promotion, and output logic.
 

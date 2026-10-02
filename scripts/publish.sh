@@ -55,21 +55,25 @@ else
   rm -rf "${LAYOUT_DIR}"
 
   PUBLISH_ARGS=(-f "$FILE" --license "${INPUT_LICENSE}" --dry-run --no-sign --output "${LAYOUT_DIR}")
-  if [[ -n "${INPUT_VERSION}" ]]; then
-    PUBLISH_ARGS+=(--version "${INPUT_VERSION}")
+  # --version stamps metadata.version into the YAML before packing.
+  # Fall back to tag so callers whose YAML omits metadata.version keep
+  # working without a new input (grcli derives the OCI tag from this value).
+  EFFECTIVE_VERSION="${INPUT_VERSION:-${INPUT_TAG}}"
+  if [[ -n "${EFFECTIVE_VERSION}" ]]; then
+    PUBLISH_ARGS+=(--version "${EFFECTIVE_VERSION}")
   fi
   echo "Packing bundle: ${INPUT_FILE}"
   grcli publish "${PUBLISH_ARGS[@]}" 2>&1 | tee "${RUNNER_TEMP}/grcli-publish-out.txt"
 
-  # When --version is set the layout tag is known; otherwise extract
-  # it from grcli output (metadata.version).
+  # When the effective version is known the layout tag matches it;
+  # otherwise extract it from grcli output (metadata.version from the YAML).
   # Assumption: grcli --dry-run prints a line containing "oci:<path>:<tag>"
   # (e.g. "oci:/tmp/bundle:0.0.1"). If grcli changes its output format,
   # this regex will fail and hit the error branch below.
-  if [[ -n "${INPUT_VERSION}" ]]; then
-    LAYOUT_TAG="${INPUT_VERSION}"
+  if [[ -n "${EFFECTIVE_VERSION}" ]]; then
+    LAYOUT_TAG="${EFFECTIVE_VERSION}"
   else
-    LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://')
+    LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://' || true)
     if [[ -z "${LAYOUT_TAG}" ]]; then
       echo "::error::Could not determine layout tag from grcli output"
       cat "${RUNNER_TEMP}/grcli-publish-out.txt"

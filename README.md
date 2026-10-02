@@ -153,44 +153,10 @@ No `registry`, `username`, or `password` needed — grcli authenticates via
 OIDC and pushes to the hub-managed registry. Signing is in-process via
 sigstore-go.
 
-## Migration from embedded grc CLI
-
-| Before (embedded `cmd/grc/`) | After (grcli + ORAS) |
-|------------|-----------|
-| No `license` input | `license` is **required** (SPDX expression) |
-| `cmd/grc/` built from source at runtime | Pre-built grcli binary from GHCR |
-| No provenance in bundles | SLSA provenance embedded by grcli |
-| No license annotation | `org.opencontainers.image.licenses` OCI annotation |
-| `bundle_version` input | Deprecated — no longer consumed, will be removed |
-
-All other inputs and outputs remain backward compatible. Existing direct-mode
-callers need only add `license: <spdx-expression>` to their `with:` block.
-
-### Legacy bundle compatibility
-
-| Tool | Legacy bundle (pre-grcli) | Current bundle (grcli) |
-|------|--------------------------|----------------------|
-| `grcli unpack` | **Pass** with `--no-verify` | Pass |
-| `grcli cat` | **Pass** | Pass |
-| ORAS push/pull | **Pass** — valid OCI layout | Pass |
-
-Legacy bundles (published by the old `cmd/grc/` CLI via `go-gemara`) use the
-same core media types and layer annotations as current bundles but lack SLSA
-provenance, license annotations, and Sigstore signature referrers.
-`grcli unpack --no-verify` and `grcli cat` both work on legacy bundles.
-To upgrade a legacy bundle so it includes provenance and signing, simply
-re-publish the original YAML through the action — a normal publish produces
-a current-format bundle with no special flags needed.
-
-**Note:** `metadata.version` must be present in the artifact YAML for grcli
-to pack the bundle. If your artifacts lack this field, set the `version`
-input — the action passes it as `--version` to grcli, which stamps it into
-the bundle's `metadata.version` before packing
-([gemaraproj/grcli#4](https://github.com/gemaraproj/grcli/pull/4)).
-
 ## Repository layout
 
 - **`action.yml`** — Composite action definition (dual-mode: direct + hub).
+- **`scripts/`** — Shell logic for publish and finalize steps (`lib.sh`, `publish.sh`, `finalize.sh`).
 - **`testdata/`** — Minimal Gemara catalog fixtures and legacy bundle OCI layout for CI tests.
 - **`docs/`** — Architecture documentation and ADRs.
 - **`specs/`** — Feature specifications.
