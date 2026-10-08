@@ -63,6 +63,10 @@ source publish.
 - Hub mode gives callers in-process signing and hub indexing when they want it.
 
 **Negative:**
+- `verified_source` and `verified_destination` outputs emit `skipped`
+  instead of `false` when verification is not attempted. Callers whose
+  downstream steps branch on `== 'false'` to mean "not attempted" must
+  update to check for `skipped`.
 - In direct mode, source signing remains external cosign, not grcli's
   in-process sigstore-go. Callers who want in-process signing use hub mode.
 - In direct mode, grcli records SLSA provenance at dry-run time (before

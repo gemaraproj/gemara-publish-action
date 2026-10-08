@@ -84,13 +84,6 @@ inputs:
       omits metadata.version do not need a separate input.
     required: false
     default: ""
-  bundle_version:
-    description: >-
-      Deprecated: no longer consumed. Retained so existing callers that pass
-      this input do not fail. Will be removed in a future major release.
-    required: false
-    default: "1"
-    deprecationMessage: "bundle_version is no longer consumed and will be removed in a future release."
   working_directory:
     description: Working directory (relative to repo root) for resolving the file input
     required: false
@@ -204,10 +197,10 @@ outputs:
     description: Effective trust mode used for destination handling
     value: ${{ steps.finalize.outputs.trust_mode }}
   verified_source:
-    description: true when source verification step passed
+    description: "true when source verification passed, skipped when not attempted"
     value: ${{ steps.finalize.outputs.verified_source }}
   verified_destination:
-    description: true when destination verification step passed
+    description: "true when destination verification passed, skipped when not attempted"
     value: ${{ steps.finalize.outputs.verified_destination }}
 
 runs:

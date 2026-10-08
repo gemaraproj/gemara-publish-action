@@ -64,12 +64,12 @@ jobs:
             echo "::error::Expected trust_mode=resign, got ${TRUST_MODE}"
             exit 1
           fi
-          if [[ "${VERIFIED_SOURCE}" != "false" ]]; then
-            echo "::error::Expected verified_source=false (signing disabled), got ${VERIFIED_SOURCE}"
+          if [[ "${VERIFIED_SOURCE}" != "skipped" ]]; then
+            echo "::error::Expected verified_source=skipped (signing disabled), got ${VERIFIED_SOURCE}"
             exit 1
           fi
-          if [[ "${VERIFIED_DESTINATION}" != "false" ]]; then
-            echo "::error::Expected verified_destination=false (no promotion), got ${VERIFIED_DESTINATION}"
+          if [[ "${VERIFIED_DESTINATION}" != "skipped" ]]; then
+            echo "::error::Expected verified_destination=skipped (no promotion), got ${VERIFIED_DESTINATION}"
             exit 1
           fi
           echo "All outputs verified"
@@ -248,6 +248,27 @@ jobs:
             exit 1
           fi
           echo "Correctly rejected promote without destination"
+
+      - name: Test working_directory traversal (should fail)
+        id: traversal
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          repository: test/repo
+          tag: latest
+          password: dummy
+          working_directory: "../../.."
+
+      - name: Assert traversal was rejected
+        if: always()
+        run: |
+          if [[ "${{ steps.traversal.outcome }}" != "failure" ]]; then
+            echo "::error::Expected action to fail on working_directory traversal, got: ${{ steps.traversal.outcome }}"
+            exit 1
+          fi
+          echo "Correctly rejected working_directory traversal"
 
   regex-fallback:
     runs-on: ubuntu-latest

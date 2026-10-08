@@ -23,9 +23,13 @@ source "${SCRIPT_DIR}/lib.sh"
 : "${GITHUB_OUTPUT:?}"
 
 # Output accumulators -- each key written exactly once at the end.
+# Verification uses three states:
+#   true    — verification ran and passed
+#   false   — verification ran and failed (script exits non-zero before this)
+#   skipped — verification was not attempted (hub mode, signing disabled, etc.)
 OUT_SOURCE_REF=""
-OUT_VERIFIED_SOURCE="false"
-OUT_VERIFIED_DESTINATION="false"
+OUT_VERIFIED_SOURCE="skipped"
+OUT_VERIFIED_DESTINATION="skipped"
 OUT_DESTINATION_REF=""
 OUT_DESTINATION_DIGEST=""
 
@@ -97,7 +101,7 @@ if [[ "${PROMOTE}" != "true" ]]; then
   {
     echo "destination_ref="
     echo "destination_digest="
-    echo "verified_destination=false"
+    echo "verified_destination=skipped"
   } >> "${GITHUB_OUTPUT}"
   exit 0
 fi
@@ -166,6 +170,14 @@ if ! DEST_DIGEST=$(normalize_oci_digest "$DEST_DIGEST"); then
 fi
 OUT_DESTINATION_REF="${DEST_REGISTRY}/${DEST_REPOSITORY}@${DEST_DIGEST}"
 OUT_DESTINATION_DIGEST="${DEST_DIGEST}"
+
+# Verify the promoted bundle matches the source by comparing digests.
+# This proves the copy is the same bundle, not just independently valid.
+if [[ "${SOURCE_DIGEST}" != "${DEST_DIGEST}" ]]; then
+  echo "::error::Digest mismatch after promotion: source=${SOURCE_DIGEST} destination=${DEST_DIGEST}"
+  exit 1
+fi
+echo "Digest match verified: source and destination are the same bundle"
 
 if [[ "${NO_SIGN}" != "true" ]]; then
   if [[ "${TRUST_MODE}" == "resign" || "${SIGN_DESTINATION}" == "true" ]]; then

@@ -98,8 +98,8 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 | `source_ref` | `registry/repository@sha256:...` (direct) or `repository@sha256:...` (hub). |
 | `destination_digest` | Destination digest after promotion. |
 | `destination_ref` | Destination image reference with digest. |
-| `verified_source` | `true` if source verify passed (direct mode only). |
-| `verified_destination` | `true` if destination verify passed. |
+| `verified_source` | `true` if source verify passed, `skipped` if not attempted. |
+| `verified_destination` | `true` if destination verify passed, `skipped` if not attempted. |
 | `trust_mode` | Effective trust mode used. |
 
 ## Caller examples
@@ -160,6 +160,42 @@ sigstore-go.
 - **`testdata/`** — Minimal Gemara catalog fixtures and legacy bundle OCI layout for CI tests.
 - **`docs/`** — Architecture documentation and ADRs.
 - **`specs/`** — Feature specifications.
+
+## Migrating from the embedded `grc` CLI
+
+This release replaces the embedded Go CLI (`cmd/grc/`) with
+[grcli](https://github.com/gemaraproj/grcli). Existing callers need one
+change:
+
+```diff
+  uses: gemaraproj/gemara-publish-action@<new-sha>
+  with:
++   license: Apache-2.0          # new required input (SPDX expression)
+    file: governance/policies/my-policy.yaml
+    registry: ghcr.io
+    repository: ${{ github.repository }}
+    tag: latest
+```
+
+### What changed
+
+| Before | After | Action needed |
+|--------|-------|---------------|
+| No `license` input | `license` **required** | Add `license: <SPDX>` to every caller |
+| `bundle_version` input accepted | Deprecated (ignored, will be removed) | Remove `bundle_version` from callers |
+| `password` always required | Required in direct mode only | No change for direct-mode callers |
+| `verified_source` = `false` when not attempted | `verified_source` = `skipped` when not attempted | Update `if:` guards that check `== 'false'` |
+| `verified_destination` = `false` when not attempted | `verified_destination` = `skipped` when not attempted | Update `if:` guards that check `== 'false'` |
+| Go toolchain required at runtime | grcli pre-built binary | None (faster builds) |
+| No SLSA provenance | SLSA provenance embedded by grcli | None (additive) |
+| No license annotation | `org.opencontainers.image.licenses` set | None (additive) |
+
+### Unchanged
+
+All direct-mode inputs (`registry`, `tag`, `username`, `password`,
+`sign_source`, `verify_source`), promotion inputs (`promote_to_destination`,
+`destination_*`, `trust_mode`), and output keys (`digest`, `source_ref`,
+`source_digest`, `destination_ref`, `destination_digest`) work the same way.
 
 ## Pinning
 

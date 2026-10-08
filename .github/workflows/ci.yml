@@ -60,6 +60,16 @@ jobs:
           grep -qE 'sha256:[a-f0-9]{64}' "${RUNNER_TEMP}/publish-out.txt" || { echo "::error::No sha256 digest in output"; exit 1; }
           echo "OCI layout structure and digest verified"
 
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run lib.sh unit tests
+        run: bash scripts/test_lib.sh
+
   migration-check:
     runs-on: ubuntu-latest
     # Tests grcli's ability to consume legacy bundles (pre-grcli format)
