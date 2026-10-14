@@ -4,4 +4,5 @@
 # Editor/IDE
 # .idea/
 # .vscode/
-localhost:5050
+# ORAS local registry directories (created during local testing)
+localhost:*/

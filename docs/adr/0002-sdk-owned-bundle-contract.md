@@ -30,7 +30,7 @@ The action owns only transport and CI concerns: registry authentication, cosign 
 - Clear audit boundary: this repository owns transport, go-gemara owns semantics.
 
 **Negative:**
-- Breaking changes in go-gemara's `bundle` API require updating `cmd/grc/`.
+- Breaking changes in go-gemara's `bundle` API required updating `cmd/grc/`. *(No longer applies — `cmd/grc/` removed in ADR-0004.)*
 - The action cannot override or extend bundle format without an upstream SDK change.
 
 ## Alternatives Considered

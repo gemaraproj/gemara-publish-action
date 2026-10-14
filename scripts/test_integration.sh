@@ -8,6 +8,8 @@
 #   1. Hub mode publish path — digest extraction from grcli output
 #   2. Direct mode with no_sign=true — signing skipped, outputs correct
 #   3. validate_working_directory rejection via publish.sh entry point
+#   4. finalize.sh rejects empty SOURCE_DIGEST
+#   5. finalize.sh rejects malformed SOURCE_DIGEST
 #
 # Run: bash scripts/test_integration.sh
 
@@ -71,15 +73,21 @@ fi
 
 REGISTRY_PORT=5555
 podman run -d --name "${CONTAINER_NAME}" -p "${REGISTRY_PORT}:5000" \
-  docker.io/library/registry:2 >/dev/null 2>&1
+  docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null 2>&1
 echo "Registry started on localhost:${REGISTRY_PORT}"
 
+registry_ready=false
 for i in {1..10}; do
   if curl -sf "http://localhost:${REGISTRY_PORT}/v2/" >/dev/null 2>&1; then
+    registry_ready=true
     break
   fi
   sleep 0.5
 done
+if [[ "${registry_ready}" != "true" ]]; then
+  echo "FAIL: Registry did not become ready on port ${REGISTRY_PORT}"
+  exit 1
+fi
 
 # ── Test 1: Hub mode publish — digest extraction ─────────────
 echo ""
@@ -104,6 +112,7 @@ GITHUB_WORKSPACE="${TMPDIR_TEST}/workspace"
 mkdir -p "${GITHUB_WORKSPACE}"
 cp "${REPO_DIR}/testdata/minimal-catalog.yaml" "${GITHUB_WORKSPACE}/"
 
+ORIGINAL_PATH="${PATH}"
 export PATH="${MOCK_BIN}:${PATH}"
 export GITHUB_OUTPUT RUNNER_TEMP GITHUB_WORKSPACE
 export GRCLI_URL="https://mock.hub.example"
@@ -139,7 +148,7 @@ echo ""
 echo "=== Test 2: Finalize with no_sign=true (direct mode) ==="
 
 unset GRCLI_URL
-export PATH="${PATH#${MOCK_BIN}:}"
+export PATH="${ORIGINAL_PATH}"
 
 oras copy --from-oci-layout "${REPO_DIR}/testdata/legacy-bundle:0.0.1" \
   "localhost:${REGISTRY_PORT}/test/nosign:latest" 2>/dev/null
@@ -219,6 +228,69 @@ else
   ((FAIL++))
 fi
 assert_contains "error message mentions workspace" "working_directory resolves outside" "${output}"
+
+# ── Test 4: finalize.sh rejects empty SOURCE_DIGEST ──────────
+echo ""
+echo "=== Test 4: finalize.sh rejects empty SOURCE_DIGEST ==="
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/empty-digest-output.txt"
+> "${GITHUB_OUTPUT}"
+
+export GITHUB_OUTPUT
+export PUBLISH_MODE="direct"
+export REGISTRY="localhost:${REGISTRY_PORT}"
+export REPOSITORY="test/nosign"
+export TAG="latest"
+export PASSWORD="test"
+export USERNAME="test"
+export SOURCE_DIGEST=""
+export SIGN_SOURCE="false"
+export VERIFY_SOURCE="false"
+export NO_SIGN="true"
+export PROMOTE="false"
+export DEST_REGISTRY="" DEST_REPOSITORY="" DEST_TAG=""
+export DEST_USERNAME="" DEST_PASSWORD=""
+export TRUST_MODE="resign"
+export SIGN_DESTINATION="false"
+export VERIFY_DESTINATION="false"
+export ALLOWED_IDENTITY_REGEX=""
+export DEFAULT_ALLOWED_IDENTITY_REGEX="^https://github.com/test/.github/workflows/"
+export COSIGN_CERTIFICATE_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+unset GRCLI_URL
+
+empty_rc=0
+empty_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || empty_rc=$?
+
+if [[ $empty_rc -ne 0 ]]; then
+  echo "  PASS: empty SOURCE_DIGEST correctly rejected (exit ${empty_rc})"
+  ((PASS++))
+else
+  echo "  FAIL: empty SOURCE_DIGEST should have been rejected"
+  ((FAIL++))
+fi
+assert_contains "error mentions digest" "No digest" "${empty_output}"
+
+# ── Test 5: finalize.sh rejects malformed SOURCE_DIGEST ──────
+echo ""
+echo "=== Test 5: finalize.sh rejects malformed SOURCE_DIGEST ==="
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/bad-digest-output.txt"
+> "${GITHUB_OUTPUT}"
+
+export GITHUB_OUTPUT
+export SOURCE_DIGEST="not-a-valid-digest"
+
+bad_rc=0
+bad_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || bad_rc=$?
+
+if [[ $bad_rc -ne 0 ]]; then
+  echo "  PASS: malformed SOURCE_DIGEST correctly rejected (exit ${bad_rc})"
+  ((PASS++))
+else
+  echo "  FAIL: malformed SOURCE_DIGEST should have been rejected"
+  ((FAIL++))
+fi
+assert_contains "error mentions digest format" "Expected sha256" "${bad_output}"
 
 # ── Results ──────────────────────────────────────────────────
 echo ""

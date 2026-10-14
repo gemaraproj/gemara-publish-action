@@ -158,7 +158,7 @@ sigstore-go.
 - **`action.yml`** — Composite action definition (dual-mode: direct + hub).
 - **`scripts/`** — Shell logic for publish and finalize steps (`lib.sh`, `publish.sh`, `finalize.sh`).
 - **`testdata/`** — Minimal Gemara catalog fixtures and legacy bundle OCI layout for CI tests.
-- **`docs/`** — Architecture documentation and ADRs.
+- **`docs/`** — ADRs (Architectural Decision Records).
 - **`specs/`** — Feature specifications.
 
 ## Migrating from the embedded `grc` CLI

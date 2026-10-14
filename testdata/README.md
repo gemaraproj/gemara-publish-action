@@ -18,3 +18,10 @@ Used to test the `version` action input, which passes `--version` to grcli
 to stamp the version from the CLI.
 
 Used in `.github/workflows/action-test.yml` (version-flag job).
+
+## `legacy-bundle/`
+
+Static OCI image layout representing a bundle packed by the old `cmd/grc/`
+CLI. Used by the `migration-check` CI job to verify `grcli` can still read
+pre-migration bundles. See [`legacy-bundle/README.md`](legacy-bundle/README.md)
+for format details, integrity verification, and media types.
