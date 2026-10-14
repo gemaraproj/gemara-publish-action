@@ -58,10 +58,21 @@ if [[ "${PUBLISH_MODE}" == "hub" ]]; then
   # host so source_ref is a pullable OCI reference.
   HUB_REGISTRY=""
   if [[ -n "${GRCLI_URL}" ]]; then
-    HUB_REGISTRY=$(curl -sf "${GRCLI_URL}/.well-known/grc-store-configuration" | python3 -c "import sys,json; print(json.load(sys.stdin).get('registry_url',''))" 2>/dev/null || true)
-    HUB_REGISTRY="${HUB_REGISTRY#https://}"
-    HUB_REGISTRY="${HUB_REGISTRY#http://}"
-    HUB_REGISTRY="${HUB_REGISTRY%/}"
+    discovery_err=""
+    if ! discovery_json=$(curl -sf "${GRCLI_URL}/.well-known/grc-store-configuration" 2>&1); then
+      discovery_err="curl failed: ${discovery_json}"
+    elif ! HUB_REGISTRY=$(printf '%s' "${discovery_json}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('registry_url',''))" 2>&1); then
+      discovery_err="JSON parse failed: ${HUB_REGISTRY}"
+      HUB_REGISTRY=""
+    fi
+    if [[ -n "${discovery_err}" ]]; then
+      echo "::warning::Hub registry discovery failed (${discovery_err})"
+      HUB_REGISTRY=""
+    else
+      HUB_REGISTRY="${HUB_REGISTRY#https://}"
+      HUB_REGISTRY="${HUB_REGISTRY#http://}"
+      HUB_REGISTRY="${HUB_REGISTRY%/}"
+    fi
   fi
   if [[ -n "${HUB_REGISTRY}" && -n "${REPOSITORY}" ]]; then
     OUT_SOURCE_REF="${HUB_REGISTRY}/${REPOSITORY}@${SOURCE_DIGEST}"
