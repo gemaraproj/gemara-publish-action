@@ -40,11 +40,11 @@ inputs:
     default: ghcr.io
   repository:
     description: >-
-      Repository path (e.g. org/gemara/my-bundle). Required in direct
-      mode (without registry host — the registry input provides it).
-      In hub mode, optional override for grcli publish --repository.
-      If promoting from hub mode, include the registry host
-      (e.g. ghcr.io/org/my-bundle) so oras can resolve the source.
+      Repository path without registry host (e.g. org/gemara/my-bundle).
+      Required in direct mode. In hub mode, optional override for
+      grcli publish --repository. For hub promotion, the action
+      discovers the hub's registry host automatically via the
+      .well-known endpoint — do not include the registry host here.
     required: false
     default: ""
   tag:
