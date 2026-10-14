@@ -12,7 +12,7 @@ project:
       affiliation: Red Hat
       primary: true
     - name: Eddie Knight
-      affiliation: Sonatype
+      affiliation: Revanite
       primary: false
   documentation:
     detailed-guide: https://github.com/gemaraproj/gemara-publish-action/blob/main/README.md
