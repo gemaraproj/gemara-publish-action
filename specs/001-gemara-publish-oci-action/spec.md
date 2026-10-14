@@ -27,7 +27,7 @@ provenance, and schema validation are delegated to
 CI callers need a **small, auditable** Action that:
 
 1. Accepts a root Gemara artifact YAML (Policy, Catalog, or Guidance) and publishes it as an OCI
-   bundle — either to the caller's own registry (direct mode) or through the provided Gemara-compatible hub implementation (hub mode, defaults to `grc.store`).
+   bundle — either to the caller's own registry (direct mode) or through a Gemara-compatible hub (hub mode, selected by setting `grcli_url`).
 2. Uses grcli for packing (assembly, SLSA provenance, license validation).
 3. Authenticates to the registry using **secrets the workflow supplies** (direct mode) or
    **OIDC** (hub mode), without echoing tokens.
@@ -77,16 +77,16 @@ and verify destination trust with the same workflow identity constraints.
 The Action must:
 
 1. **Install grcli** via the `gemaraproj/grcli` install action (SHA-pinned, digest-verified).
-2. **Install ORAS** for registry push and promotion copy.
-3. **Validate** (optional): Run `grcli validate` against the Gemara CUE spec.
-4. **Pack:** Run `grcli publish --dry-run --no-sign` to assemble the bundle with SLSA
+   ORAS is installed as part of the grcli install action.
+2. **Validate** (optional): Run `grcli validate` against the Gemara CUE spec.
+3. **Pack:** Run `grcli publish --dry-run --no-sign` to assemble the bundle with SLSA
    provenance and license annotation into a local OCI layout.
-5. **Push:** Run `oras copy --from-oci-layout` to push the bundle to the caller's registry
+4. **Push:** Run `oras copy --from-oci-layout` to push the bundle to the caller's registry
    with the caller's tag.
-6. **Optional sign/verify:** Keyless cosign sign and verify on the source digest.
-7. **Optional promotion:** Copy source to destination registry with selected trust mode and
+5. **Optional sign/verify:** Keyless cosign sign and verify on the source digest.
+6. **Optional promotion:** Copy source to destination registry with selected trust mode and
    destination sign/verify.
-8. **Output contract:** Append source/destination refs, digests, and verification booleans to
+7. **Output contract:** Append source/destination refs, digests, and verification booleans to
    `GITHUB_OUTPUT`.
 
 ## Scope boundaries
@@ -109,15 +109,6 @@ as the version selector.
 
 - **WHEN** the workflow invokes the Action without setting `grcli_version`
 - **THEN** the Action SHALL install the default grcli version documented in `action.yml`
-
-### Requirement: Pinned ORAS CLI install
-
-The Action SHALL install the ORAS CLI using the `oras_version` input.
-
-#### Scenario: Default version is used when input omitted
-
-- **WHEN** the workflow invokes the Action without setting `oras_version`
-- **THEN** the Action SHALL install the default ORAS version documented in `action.yml`
 
 ### Requirement: License is required
 
@@ -205,5 +196,5 @@ When `promote_to_destination` is enabled, the Action SHALL honor `trust_mode` (`
   publish, version-flag, and input validation against a local registry.
 - **Backward compatible:** All existing inputs (`registry`, `tag`, `username`, `password`,
   `sign_source`, `verify_source`) work unchanged. Only `license` is new.
-- **Consumers** can pin `grcli_version` and `oras_version` and rely on stable
+- **Consumers** can pin `grcli_version` and rely on stable
   `with:` / `outputs.digest` semantics documented in [README.md](../../README.md).

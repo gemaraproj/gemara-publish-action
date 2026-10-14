@@ -11,6 +11,14 @@
 # Both modes: (1) validate via grcli, (2) publish, (3) optional promote,
 # (4) sign/verify on destination.
 # grcli packs SLSA provenance into the bundle manifest in both modes.
+#
+# Tool dependencies:
+#   grcli — installed via gemaraproj/grcli install action (SHA-pinned)
+#   oras  — provided by grcli's install action; used by this action for
+#           registry push (direct mode) and promotion (both modes)
+#   cosign — installed conditionally for signing/verification
+#   cue   — installed conditionally for validation
+#
 # See README: boundaries (what is not in this action).
 name: Publish Gemara OCI bundle
 description: >-
@@ -32,9 +40,11 @@ inputs:
     default: ghcr.io
   repository:
     description: >-
-      Repository path without registry (e.g. org/gemara/my-bundle).
-      Required in direct mode. In hub mode, optional override for
-      grcli publish --repository.
+      Repository path (e.g. org/gemara/my-bundle). Required in direct
+      mode (without registry host — the registry input provides it).
+      In hub mode, optional override for grcli publish --repository.
+      If promoting from hub mode, include the registry host
+      (e.g. ghcr.io/org/my-bundle) so oras can resolve the source.
     required: false
     default: ""
   tag:
@@ -66,14 +76,16 @@ inputs:
   validate:
     description: >-
       Run grcli validate (cue vet against the authoritative Gemara CUE schemas)
-      before publish. CUE is installed automatically when this is enabled.
+      before publish. Requires gemara_spec_dir to point at a local Gemara spec
+      checkout. CUE is installed automatically when this is enabled.
     required: false
-    default: "true"
+    default: "false"
   gemara_spec_dir:
     description: >-
       Path to a local Gemara spec checkout for grcli validate --spec.
-      Recommended when validate is true; omit only if grcli can locate
-      the spec on its own.
+      Required when validate is true (grcli v0.2.0 cannot resolve the
+      spec without it; a future grcli version may resolve it from the
+      CUE registry automatically).
     required: false
     default: ""
   version:
@@ -108,10 +120,6 @@ inputs:
       --no-sign. In direct mode, disables the cosign sign step.
     required: false
     default: "false"
-  oras_version:
-    description: ORAS CLI version (no v prefix)
-    required: false
-    default: "1.2.0"
   sign_source:
     description: >-
       Keyless-sign source digest after publish (direct mode only; in hub
@@ -263,12 +271,12 @@ runs:
             echo "::error::destination_registry, destination_repository, destination_username, and destination_password are required when promote_to_destination=true"
             exit 1
           fi
+          if [[ -n "${GRCLI_URL}" && -z "${REPOSITORY}" ]]; then
+            echo "::error::repository input is required for promotion in hub mode (needed to construct source reference for ORAS copy)"
+            exit 1
+          fi
         fi
 
-    - name: Install ORAS CLI
-      uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
-      with:
-        version: ${{ inputs.oras_version }}
 
     - name: Install cosign
       if: >-
@@ -348,6 +356,7 @@ runs:
         DEST_USERNAME: ${{ inputs.destination_username }}
         DEST_PASSWORD: ${{ inputs.destination_password }}
         TRUST_MODE: ${{ inputs.trust_mode }}
+        GRCLI_URL: ${{ inputs.grcli_url }}
         SIGN_DESTINATION: ${{ inputs.sign_destination }}
         VERIFY_DESTINATION: ${{ inputs.verify_destination }}
         ALLOWED_IDENTITY_REGEX: ${{ inputs.allowed_identity_regex }}

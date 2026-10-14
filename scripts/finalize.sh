@@ -8,7 +8,7 @@
 #   PUBLISH_MODE, REGISTRY, REPOSITORY, TAG, PASSWORD, USERNAME,
 #   SOURCE_DIGEST, SIGN_SOURCE, VERIFY_SOURCE, NO_SIGN,
 #   PROMOTE, DEST_REGISTRY, DEST_REPOSITORY, DEST_TAG,
-#   DEST_USERNAME, DEST_PASSWORD, TRUST_MODE,
+#   DEST_USERNAME, DEST_PASSWORD, TRUST_MODE, GRCLI_URL,
 #   SIGN_DESTINATION, VERIFY_DESTINATION,
 #   ALLOWED_IDENTITY_REGEX, DEFAULT_ALLOWED_IDENTITY_REGEX,
 #   COSIGN_CERTIFICATE_OIDC_ISSUER,
@@ -54,12 +54,22 @@ verify_ref() {
 
 if [[ "${PUBLISH_MODE}" == "hub" ]]; then
   # ── Hub mode finalize ─────────────────────────────────────
-  # grcli handled signing in-process. The source ref is
-  # hub-managed; we record what we know (repository + digest).
-  if [[ -n "${REPOSITORY}" ]]; then
+  # grcli handled signing in-process. Discover the hub's registry
+  # host so source_ref is a pullable OCI reference.
+  HUB_REGISTRY=""
+  if [[ -n "${GRCLI_URL}" ]]; then
+    HUB_REGISTRY=$(curl -sf "${GRCLI_URL}/.well-known/grc-store-configuration" | python3 -c "import sys,json; print(json.load(sys.stdin).get('registry_url',''))" 2>/dev/null || true)
+    HUB_REGISTRY="${HUB_REGISTRY#https://}"
+    HUB_REGISTRY="${HUB_REGISTRY#http://}"
+    HUB_REGISTRY="${HUB_REGISTRY%/}"
+  fi
+  if [[ -n "${HUB_REGISTRY}" && -n "${REPOSITORY}" ]]; then
+    OUT_SOURCE_REF="${HUB_REGISTRY}/${REPOSITORY}@${SOURCE_DIGEST}"
+  elif [[ -n "${REPOSITORY}" ]]; then
+    echo "::warning::Could not discover hub registry — source_ref has no registry host."
     OUT_SOURCE_REF="${REPOSITORY}@${SOURCE_DIGEST}"
   else
-    echo "::warning::Hub mode without repository input — source_ref is digest-only (@${SOURCE_DIGEST}) and not a pullable OCI reference."
+    echo "::warning::Hub mode without repository input — source_ref is digest-only and not a pullable OCI reference."
     OUT_SOURCE_REF="@${SOURCE_DIGEST}"
   fi
 else
@@ -123,9 +133,12 @@ if [[ "${PUBLISH_MODE}" == "hub" ]]; then
     echo "::error::repository input is required for promotion in hub mode (needed to construct source reference for ORAS copy)."
     exit 1
   fi
-  # NOTE: REPOSITORY must include the registry host (e.g., ghcr.io/org/repo)
-  # for oras copy to resolve the source. A bare path defaults to docker.io.
-  SOURCE_COPY_REF="${REPOSITORY}@${SOURCE_DIGEST}"
+  # HUB_REGISTRY was discovered earlier for source_ref.
+  if [[ -z "${HUB_REGISTRY}" ]]; then
+    echo "::error::Could not discover registry host from ${GRCLI_URL} — hub promotion requires a reachable hub."
+    exit 1
+  fi
+  SOURCE_COPY_REF="${HUB_REGISTRY}/${REPOSITORY}@${SOURCE_DIGEST}"
 else
   SOURCE_COPY_REF="${REGISTRY}/${REPOSITORY}@${SOURCE_DIGEST}"
   if [[ -z "${PASSWORD}" ]]; then
