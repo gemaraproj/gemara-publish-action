@@ -2,74 +2,21 @@
 name: "Release"
 on:
   workflow_dispatch:
-  pull_request_target:
-    types: [closed]
-    branches:
-      - main
+  push:
+    branches: [main]
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions: {}
 jobs:
-  create_release:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       (contains(github.event.pull_request.labels.*.name, 'breaking') ||
-        contains(github.event.pull_request.labels.*.name, 'feature') ||
-        contains(github.event.pull_request.labels.*.name, 'vuln') ||
-        contains(github.event.pull_request.labels.*.name, 'release')))
-    runs-on: ubuntu-latest
+  release:
     permissions:
       contents: write
       pull-requests: read
-    outputs:
-      full-tag: ${{ steps.release-drafter.outputs.tag_name }}
-      short-tag: ${{ steps.get_tag_name.outputs.SHORT_TAG }}
-      release-id: ${{ steps.release-drafter.outputs.id }}
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-      - name: Draft release
-        id: release-drafter
-        uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
-        with:
-          config-name: release-drafter.yml
-          publish: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Get the short tag
-        id: get_tag_name
-        run: |
-          short_tag=$(echo "${{ steps.release-drafter.outputs.tag_name }}" | cut -d. -f1)
-          echo "SHORT_TAG=$short_tag" >> "$GITHUB_OUTPUT"
-      - name: Create and push tags
-        run: |
-          git tag -f "${{ steps.release-drafter.outputs.tag_name }}"
-          git tag -f "${{ steps.get_tag_name.outputs.SHORT_TAG }}" "${{ steps.release-drafter.outputs.tag_name }}"
-          git push -f origin "${{ steps.release-drafter.outputs.tag_name }}"
-          git push -f origin "${{ steps.get_tag_name.outputs.SHORT_TAG }}"
-
-  publish_release:
-    needs: create_release
-    if: needs.create_release.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-      - name: Publish draft release
-        run: |
-          gh api \
-            --method PATCH \
-            "/repos/${{ github.repository }}/releases/${{ needs.create_release.outputs.release-id }}" \
-            -F draft=false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    uses: github-community-projects/ospo-reusable-workflows/.github/workflows/release-minimal.yaml@3e055d5fc59e62419fb3103d96fd116ddcf89c8c # v2.3.0
+    with:
+      publish: true
+      release-config-name: release-drafter.yml
+      release-only-with-label: true
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
