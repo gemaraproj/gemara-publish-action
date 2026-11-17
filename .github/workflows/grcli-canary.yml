@@ -32,12 +32,18 @@ on:
         required: false
         type: string
         default: gemara-publish-action-canary
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/grcli-canary.yml'
+      - 'scripts/**'
+      - 'testdata/**'
 
 permissions:
   contents: read
 
 env:
-  GRCLI_REF: ${{ inputs.grcli_ref }}
+  GRCLI_REF: ${{ inputs.grcli_ref || 'v0.3.0-rc.1' }}
   # CUE version skew check: v0.15.1 is what action.yml pins, v0.17.1 is what
   # grcli's own CI runs. validate must pass under both.
   CUE_ACTION_PIN: "v0.15.1"
@@ -45,7 +51,7 @@ env:
 
 jobs:
   legacy-bundle-compat:
-    name: "Legacy bundle compat — grcli ${{ inputs.grcli_ref }}"
+    name: "Legacy bundle compat — grcli ${{ inputs.grcli_ref || 'v0.3.0-rc.1' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +101,7 @@ jobs:
     # grcli#6 (resolve the Gemara schema from the CUE central registry,
     # unreleased) is the prerequisite for flipping this action's validate
     # default to true (#46). v0.2.0 requires --spec; the canary ref must not.
-    name: "validate w/o --spec — grcli ${{ inputs.grcli_ref }}"
+    name: "validate w/o --spec — grcli ${{ inputs.grcli_ref || 'v0.3.0-rc.1' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -140,7 +146,7 @@ jobs:
     # resolution. The manifest-fetch assertion proves the extracted digest
     # is a MANIFEST digest — if grcli starts printing layer digests first,
     # publish.sh's first-sha256 regex would silently grab the wrong one.
-    name: "Direct mode — grcli ${{ inputs.grcli_ref }}"
+    name: "Direct mode — grcli ${{ inputs.grcli_ref || 'v0.3.0-rc.1' }}"
     runs-on: ubuntu-latest
     services:
       registry:
@@ -206,6 +212,9 @@ jobs:
     # value — a 401 on the v0.2.0 probe means the hub is staging-only; an
     # auth error on both means the binding is missing.
     name: "Hub mode staging — grcli ${{ inputs.grcli_ref }}"
+    # Dispatch-only: fork pull_requests get a read-only token with no
+    # id-token, so OIDC hub auth is impossible in PR context.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     permissions:
