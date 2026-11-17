@@ -173,6 +173,7 @@ jobs:
           version: 1.3.0
 
       - name: Run scripts/publish.sh (direct mode, local registry)
+        id: publish
         env:
           INPUT_WORKING_DIRECTORY: "."
           INPUT_FILE: testdata/minimal-catalog.yaml
@@ -185,17 +186,14 @@ jobs:
           INPUT_VERSION: ""
           INPUT_NO_SIGN: "true"
           GRCLI_URL: ""
-          GITHUB_OUTPUT: ${{ runner.temp }}/canary-publish-outputs
-        run: |
-          set -euo pipefail
-          rm -f "${GITHUB_OUTPUT}"
-          bash scripts/publish.sh
+        run: bash scripts/publish.sh
 
       - name: Assert outputs and manifest-digest correctness
+        env:
+          MODE: ${{ steps.publish.outputs.mode }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           set -euo pipefail
-          MODE="$(grep -oP '^mode=\K.*' "${RUNNER_TEMP}/canary-publish-outputs" || true)"
-          DIGEST="$(grep -oP '^digest=\K.*' "${RUNNER_TEMP}/canary-publish-outputs" || true)"
           [[ "${MODE}" == "direct" ]] || { echo "::error::Expected mode=direct, got ${MODE}"; exit 1; }
           [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Invalid digest: ${DIGEST}"; exit 1; }
           echo "publish.sh extracted: ${DIGEST}"
@@ -270,6 +268,7 @@ jobs:
           fi
 
       - name: Run scripts/publish.sh (hub mode, canary grcli)
+        id: publish
         env:
           INPUT_WORKING_DIRECTORY: "."
           INPUT_FILE: testdata/minimal-catalog.yaml
@@ -282,18 +281,14 @@ jobs:
           INPUT_VERSION: ""
           INPUT_NO_SIGN: "false"
           GRCLI_URL: ${{ inputs.hub_url }}
-          GITHUB_OUTPUT: ${{ runner.temp }}/canary-hub-outputs
-        run: |
-          set -euo pipefail
-          rm -f "${GITHUB_OUTPUT}"
-          bash scripts/publish.sh
+        run: bash scripts/publish.sh
 
       - name: Assert digest resolves to a manifest on the hub registry
         env:
           CANARY_REPO: ${{ inputs.canary_namespace }}/minimal-catalog
+          DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           set -euo pipefail
-          DIGEST="$(grep -oP '^digest=\K.*' "${RUNNER_TEMP}/canary-hub-outputs" || true)"
           [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::publish.sh did not extract a digest"; exit 1; }
           echo "publish.sh extracted: ${DIGEST}"
           # Anonymous reads are enabled on the hub registry.
