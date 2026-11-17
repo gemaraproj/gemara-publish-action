@@ -150,7 +150,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       registry:
-        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace5288588a7b332415373
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
         ports:
           - 5000:5000
     steps:
@@ -211,7 +211,7 @@ jobs:
     # done the staging cutover. continue-on-error: the diagnostics are the
     # value — a 401 on the v0.2.0 probe means the hub is staging-only; an
     # auth error on both means the binding is missing.
-    name: "Hub mode staging — grcli ${{ inputs.grcli_ref }}"
+    name: "Hub mode staging — grcli ${{ inputs.grcli_ref || 'v0.3.0-rc.1' }}"
     # Dispatch-only: fork pull_requests get a read-only token with no
     # id-token, so OIDC hub auth is impossible in PR context.
     if: github.event_name == 'workflow_dispatch'
