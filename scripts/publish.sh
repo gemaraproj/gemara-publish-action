@@ -18,6 +18,9 @@ source "${SCRIPT_DIR}/lib.sh"
 
 validate_working_directory
 FILE="$(realpath "${INPUT_FILE}")"
+# The working-directory guard does not cover the file path itself: an
+# absolute path, ../, or a symlinked file can point outside the workspace.
+assert_within_workspace "${FILE}" "file"
 
 if [[ -n "${GRCLI_URL}" ]]; then
   # ── Hub mode ──────────────────────────────────────────────

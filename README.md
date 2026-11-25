@@ -209,6 +209,8 @@ change:
 | Before | After | Action needed |
 |--------|-------|---------------|
 | No `license` input | `license` **required** | Add `license: <SPDX>` to every caller |
+| `validate` defaults to `true` | `validate` defaults to `false` (grcli v0.2.0 needs `gemara_spec_dir`; #46 tracks flipping back) | Set `validate: "true"` and `gemara_spec_dir` to keep validation |
+| `oras_version` input accepted | Removed (ORAS comes from the grcli install action) | Remove `oras_version` from callers |
 | `bundle_version` input accepted | Removed (silently ignored by GitHub Actions if still passed) | Remove `bundle_version` from callers |
 | `password` always required | Required in direct mode only | No change for direct-mode callers |
 | `verified_source` = `false` when not attempted | `verified_source` = `skipped` when not attempted | Update `if:` guards that check `== 'false'` |

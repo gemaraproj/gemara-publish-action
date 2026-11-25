@@ -158,6 +158,14 @@ jobs:
 
   input-validation:
     runs-on: ubuntu-latest
+    # Local registry so the validate-without-spec test fails for the right
+    # reason: with reachable credentials the publish step would succeed,
+    # leaving the Validate step as the only possible failure.
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace5288588a7b332415373
+        ports:
+          - 5000:5000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -256,9 +264,11 @@ jobs:
         with:
           file: testdata/minimal-catalog.yaml
           license: Apache-2.0
-          repository: test/repo
+          registry: localhost:5000
+          repository: test/validate-no-spec
           tag: latest
-          password: dummy
+          username: test
+          password: test
           validate: "true"
 
       - name: Assert validate without spec dir was rejected
@@ -290,6 +300,28 @@ jobs:
             exit 1
           fi
           echo "Correctly rejected working_directory traversal"
+
+      - name: Test file path escape (should fail)
+        id: file-escape
+        uses: ./
+        continue-on-error: true
+        with:
+          file: ../../../../../etc/hostname
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/file-escape
+          tag: latest
+          username: test
+          password: test
+
+      - name: Assert file path escape was rejected
+        if: always()
+        run: |
+          if [[ "${{ steps.file-escape.outcome }}" != "failure" ]]; then
+            echo "::error::Expected action to fail when file resolves outside the workspace, got: ${{ steps.file-escape.outcome }}"
+            exit 1
+          fi
+          echo "Correctly rejected file path escape"
 
   regex-fallback:
     runs-on: ubuntu-latest

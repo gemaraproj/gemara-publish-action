@@ -13,10 +13,12 @@
 # grcli packs SLSA provenance into the bundle manifest in both modes.
 #
 # Tool dependencies:
-#   grcli — installed via gemaraproj/grcli install action (SHA-pinned)
+#   grcli — installed via the gemaraproj/grcli install action; the binary's
+#           cosign signature is verified before use (verify: "true")
 #   oras  — provided by grcli's install action; used by this action for
 #           registry push (direct mode) and promotion (both modes)
-#   cosign — installed conditionally for signing/verification
+#   cosign — installed unconditionally (the grcli install verification
+#           needs it) and used for signing/verification
 #   cue   — installed conditionally for validation
 #
 # See README: boundaries (what is not in this action).
@@ -284,9 +286,9 @@ runs:
 
 
     - name: Install cosign
-      if: >-
-        (inputs.grcli_url == '' && (inputs.sign_source == 'true' || inputs.verify_source == 'true')) ||
-        inputs.promote_to_destination == 'true'
+      # Unconditional: the grcli install step verifies the binary's cosign
+      # signature, so cosign must be on PATH in every mode, not only when
+      # this action itself signs or verifies.
       uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       with:
         cosign-release: ${{ inputs.cosign_version }}
@@ -295,6 +297,7 @@ runs:
       uses: gemaraproj/grcli/.github/actions/install@fd1da672bae6d3bca96d2f8cd46ee89369113707 # v0.2.0
       with:
         version: ${{ inputs.grcli_version }}
+        verify: "true"
 
     - name: Setup CUE
       if: inputs.validate == 'true'
@@ -314,6 +317,7 @@ runs:
         source "${{ github.action_path }}/scripts/lib.sh"
         validate_working_directory
         FILE="$(realpath "${INPUT_FILE}")"
+        assert_within_workspace "${FILE}" "file"
         VALIDATE_ARGS=(-f "$FILE")
         if [[ -n "${GRCLI_SPEC_DIR}" ]]; then
           VALIDATE_ARGS+=(--spec "${GRCLI_SPEC_DIR}")

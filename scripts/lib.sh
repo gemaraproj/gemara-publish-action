@@ -22,6 +22,19 @@ normalize_oci_digest() {
   return 1
 }
 
+# Validate that a resolved path stays inside GITHUB_WORKSPACE.
+# Usage: assert_within_workspace "$resolved_path" ["label"]
+#   Expects: GITHUB_WORKSPACE to be set.
+assert_within_workspace() {
+  local path="$1" label="${2:-path}"
+  local workspace_dir
+  workspace_dir="$(cd -- "${GITHUB_WORKSPACE}" && pwd -P)" || exit 1
+  if [[ "${path}" != "${workspace_dir}" && "${path}" != "${workspace_dir%/}/"* ]]; then
+    echo "::error::${label} resolves outside the workspace: ${path}"
+    exit 1
+  fi
+}
+
 # Validate that the working directory resolves inside GITHUB_WORKSPACE.
 # Exits with error if the resolved path escapes the workspace.
 # Usage: validate_working_directory

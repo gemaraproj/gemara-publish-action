@@ -76,7 +76,8 @@ and verify destination trust with the same workflow identity constraints.
 
 The Action must:
 
-1. **Install grcli** via the `gemaraproj/grcli` install action (SHA-pinned, digest-verified).
+1. **Install grcli** via the `gemaraproj/grcli` install action (SHA-pinned;
+   the fetched binary's cosign signature is verified before use).
    ORAS is installed as part of the grcli install action.
 2. **Validate** (optional): Run `grcli validate` against the Gemara CUE spec.
 3. **Pack:** Run `grcli publish --dry-run --no-sign` to assemble the bundle with SLSA
