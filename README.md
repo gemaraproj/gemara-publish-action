@@ -157,7 +157,28 @@ The hub's catalog indexes a bundle under the namespace derived from the
 bundle's `metadata.author.id`. If that does not match the repository
 namespace you publish to, the hub rejects the sync with
 `422 catalog_coordinate_mismatch`. Keep `metadata.author.id` in your
-artifact YAML equal to the namespace in the `repository` input.
+artifact YAML equal to the namespace in the `repository` input: the hub
+derives the coordinate as `slugify(author.id)/slugify(id)`, and the
+repository input cannot override it.
+
+Hub mode runs only inside GitHub Actions. grcli's CI authentication uses
+the GitHub Actions OIDC token exclusively, and keyless signing — the only
+signature grc.store accepts — needs the same token.
+
+The grcli pin must match the hub's cutover state. Released grcli v0.2.0
+pushes to the served repository, which a pre-cutover hub accepts and a
+cut-over hub refuses with 401; grcli v0.3.0 and later push to
+`staging/<namespace>/<id>` first, which a pre-cutover hub refuses. A 401
+at the first blob push in hub mode means the pin and the hub are on
+opposite sides of the cutover.
+
+Common hub-mode errors:
+
+| Error | Meaning |
+|---|---|
+| `401` at the first blob push | grcli pin and hub are on opposite sides of the staging cutover |
+| `422 catalog_coordinate_mismatch` | `metadata.author.id` does not match the repository namespace |
+| Sync refused, `catalog_unsigned` | `no_sign: true` in hub mode; grc.store accepts only keyless signatures |
 
 ## Repository layout
 

@@ -41,8 +41,11 @@ inputs:
   repository:
     description: >-
       Repository path without registry host (e.g. org/gemara/my-bundle).
-      Required in direct mode. In hub mode, optional override for
-      grcli publish --repository. For hub promotion, the action
+      Required in direct mode. In hub mode, optional; must agree with the
+      coordinate the hub derives from the artifact body (slugify(author.id)/
+      slugify(id)) — grc.store refuses a mismatch at sync with
+      catalog_coordinate_mismatch, so this cannot override the derived
+      coordinate. For hub promotion, the action
       discovers the hub's registry host automatically via the
       .well-known endpoint — do not include the registry host here.
     required: false
@@ -116,8 +119,10 @@ inputs:
     default: ""
   no_sign:
     description: >-
-      Skip signing during publish. In hub mode, passed as grcli publish
-      --no-sign. In direct mode, disables the cosign sign step.
+      Skip signing during publish. Direct mode only in practice: grc.store
+      hubs refuse unsigned bundles at sync (catalog_unsigned), so a hub-mode
+      publish uploads but cannot complete. In direct mode, disables the
+      cosign sign step.
     required: false
     default: "false"
   sign_source:

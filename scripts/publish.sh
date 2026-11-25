@@ -32,6 +32,10 @@ if [[ -n "${GRCLI_URL}" ]]; then
     PUBLISH_ARGS+=(--version "${INPUT_VERSION}")
   fi
   if [[ "${INPUT_NO_SIGN}" == "true" ]]; then
+    # grc.store hubs refuse unsigned bundles at sync (catalog_unsigned):
+    # the publish uploads but cannot complete. Intended for direct mode or
+    # self-hosted hubs that accept unsigned material.
+    echo "::warning::no_sign=true in hub mode: grc.store refuses unsigned bundles at sync; the publish will upload but fail to complete."
     PUBLISH_ARGS+=(--no-sign)
   fi
 
