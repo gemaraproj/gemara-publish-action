@@ -526,6 +526,11 @@ jobs:
           destination_username: test
           destination_password: test
           trust_mode: copy-only
+          # Plain oras copy carries no signatures and nothing is signed
+          # (no_sign), so there is nothing to verify on the destination —
+          # the finalize no_sign skip gate deliberately excludes copy-only.
+          sign_destination: "false"
+          verify_destination: "false"
 
       - name: Assert copy-only promotion outputs
         env:
