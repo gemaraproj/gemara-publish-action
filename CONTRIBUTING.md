@@ -15,43 +15,52 @@ This project follows the [OpenSSF Code of Conduct](https://openssf.org/community
 
 ## Development
 
-The action is a composite action defined in [`action.yml`](action.yml). It calls `grc`, a small Go program in [`cmd/grc/`](cmd/grc/) that wraps the [go-gemara](https://github.com/gemaraproj/go-gemara) bundle SDK and ORAS. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [ADRs](docs/adr/) for design context.
+The action is a composite action defined in [`action.yml`](action.yml). There is no embedded CLI: the action installs [grcli](https://github.com/gemaraproj/grcli) (SHA-pinned install action, cosign signature verified) and drives it through the shell scripts in [`scripts/`](scripts/) — `lib.sh` (shared helpers), `publish.sh` (validate/pack/push), and `finalize.sh` (sign/verify/promote). See the "Responsibility split" section of the [README](README.md) and the [ADRs](docs/adr/) — especially [ADR-0004](docs/adr/0004-wrap-grcli.md), which records the migration from the old embedded `grc` CLI — for design context.
 
 ### Prerequisites
 
-- Go (version in [`cmd/grc/go.mod`](cmd/grc/go.mod))
-- [cosign](https://github.com/sigstore/cosign) and [ORAS](https://oras.land/) if you test signing or promotion locally
+- bash 4+, python3 (with PyYAML), curl
+- [grcli](https://github.com/gemaraproj/grcli) for validation and dry-run packing
+- [ORAS](https://oras.land/) and a container runtime (podman or docker) for the integration tests and local registry workflows
+- [cosign](https://github.com/sigstore/cosign) if you test signing or promotion locally
 
-### Build
+### Test locally
 
-```bash
-go build -C cmd/grc -o grc .
-```
-
-### Validate locally
-
-CI builds `grc` and runs a validate, assemble, and pack dry run against [`testdata/minimal-catalog.yaml`](testdata/minimal-catalog.yaml). The push step fails because no registry is running, which is expected. To run the same check:
+Unit tests for the shell helpers (digest normalization, workspace boundary checks, YAML version detection) run anywhere:
 
 ```bash
-go build -C cmd/grc -o "$PWD/grc" .
-cd testdata
-GEMARA_REGISTRY_PASSWORD=dummy ../grc \
-  -registry=localhost:5000 \
-  -repository=ci/test \
-  -tag=ci \
-  -file=minimal-catalog.yaml \
-  -username=ci \
-  -validate=true
+bash scripts/test_lib.sh
 ```
 
-Output lines starting with `validate:`, `assemble:`, or `pack:` mean that stage failed.
+Integration tests for `publish.sh` and `finalize.sh` (hub-mode digest extraction, finalize output states, hub registry-discovery fallbacks, traversal rejection) start a local `registry:2` container and need a container runtime plus `oras`:
+
+```bash
+bash scripts/test_integration.sh
+```
+
+To validate a fixture the way CI does, check out the Gemara spec and run grcli against it:
+
+```bash
+git clone --depth 1 https://github.com/gemaraproj/gemara /tmp/gemara-spec
+grcli validate -f testdata/minimal-catalog.yaml --spec /tmp/gemara-spec
+```
+
+### CI
+
+CI runs on every pull request against `main` (see [`.github/workflows/`](.github/workflows/)):
+
+- `ci.yml` — validate (grcli + CUE against the Gemara spec), lib.sh unit tests, publish/finalize integration tests, legacy-bundle migration check
+- `action-test.yml` — end-to-end runs of the composite action against a local registry: publish, version flag and precedence, tag rescue, promotion (resign, copy-only, and copy-referrers), input validation, schema-validation failure
+- `signing-test.yml` — the default sign/verify posture (keyless cosign) against a local registry; runs on push (needs `id-token: write`, which fork PRs cannot receive)
+- `codeql.yml` — CodeQL over the workflow files
+- `grcli-canary.yml` — early-warning tests against unreleased grcli refs; runs on PRs touching `scripts/` or `testdata/` (hub-mode job is dispatch-only)
 
 ## Pull Request Guidelines
 
 PRs must meet the following criteria:
 
 - **Clear title** following [Conventional Commits](https://www.conventionalcommits.org/) (for example `feat:`, `fix:`, `docs:`, `chore:`)
-- **All CI checks pass**, including the build, dry run, and CodeQL
+- **All CI checks pass**, including unit, integration, and end-to-end tests
 - **Actions pinned to a full commit SHA** with a version comment for any new or updated `uses:` reference
 - **README updated** when you add or change inputs, outputs, or behavior
 
