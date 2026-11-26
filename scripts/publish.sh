@@ -65,22 +65,30 @@ else
 
   PUBLISH_ARGS=(-f "$FILE" --license "${INPUT_LICENSE}" --dry-run --no-sign --output "${LAYOUT_DIR}")
   # --version stamps metadata.version into the YAML before packing.
-  # Fall back to tag so callers whose YAML omits metadata.version keep
-  # working without a new input (grcli derives the OCI tag from this value).
-  EFFECTIVE_VERSION="${INPUT_VERSION:-${INPUT_TAG}}"
-  if [[ -n "${EFFECTIVE_VERSION}" ]]; then
-    PUBLISH_ARGS+=(--version "${EFFECTIVE_VERSION}")
+  # Precedence: the version input (explicit override), then the YAML's own
+  # metadata.version (grcli reads it when no --version is passed), then the
+  # tag input as a rescue for files that omit the version — grcli refuses
+  # to pack those without one. The tag never stamps over a version the
+  # file already carries.
+  VERSION_ARG=""
+  if [[ -n "${INPUT_VERSION}" ]]; then
+    VERSION_ARG="${INPUT_VERSION}"
+  elif [[ -n "${INPUT_TAG}" ]] && ! yaml_has_metadata_version "${FILE}"; then
+    VERSION_ARG="${INPUT_TAG}"
+  fi
+  if [[ -n "${VERSION_ARG}" ]]; then
+    PUBLISH_ARGS+=(--version "${VERSION_ARG}")
   fi
   echo "Packing bundle: ${INPUT_FILE}"
   grcli publish "${PUBLISH_ARGS[@]}" 2>&1 | tee "${RUNNER_TEMP}/grcli-publish-out.txt"
 
-  # When the effective version is known the layout tag matches it;
-  # otherwise extract it from grcli output (metadata.version from the YAML).
+  # When a version was passed the layout tag matches it; otherwise extract
+  # it from grcli output (metadata.version from the YAML).
   # Assumption: grcli --dry-run prints a line containing "oci:<path>:<tag>"
   # (e.g. "oci:/tmp/bundle:0.0.1"). If grcli changes its output format,
   # this regex will fail and hit the error branch below.
-  if [[ -n "${EFFECTIVE_VERSION}" ]]; then
-    LAYOUT_TAG="${EFFECTIVE_VERSION}"
+  if [[ -n "${VERSION_ARG}" ]]; then
+    LAYOUT_TAG="${VERSION_ARG}"
   else
     LAYOUT_TAG=$(grep -oE 'oci:.*:([^ ]+)' "${RUNNER_TEMP}/grcli-publish-out.txt" | head -1 | sed 's/.*://' || true)
     if [[ -z "${LAYOUT_TAG}" ]]; then

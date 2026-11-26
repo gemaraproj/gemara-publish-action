@@ -69,12 +69,12 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 |-------|-------------|------|
 | `file` | Root Gemara artifact YAML. **Required.** | Both |
 | `license` | SPDX license expression (e.g. `Apache-2.0`). **Required.** | Both |
-| `version` | Artifact version stamped into `metadata.version` before packing (optional). | Both |
+| `version` | Artifact version stamped into `metadata.version` before packing (optional; overrides the file's value). | Both |
 | `grcli_url` | Hub base URL. When set, enables hub mode. | Hub |
 | `no_sign` | Skip signing (`"true"` / `"false"`). | Both |
 | `registry` | Registry host (e.g. `ghcr.io`). | Direct |
 | `repository` | Required in direct mode. Optional override in hub mode. | Both |
-| `tag` | Tag to push. Required in direct mode. | Direct |
+| `tag` | Tag to push. Required in direct mode. Also supplies `metadata.version` when the YAML omits it; a file that carries a version keeps it. | Direct |
 | `username`, `password` | Source registry auth. | Direct |
 | `validate` | Run `grcli validate` before publish (default `false`; requires `gemara_spec_dir`). | Both |
 | `gemara_spec_dir` | Path to local Gemara spec checkout for validation. Required when `validate` is `true`. | Both |

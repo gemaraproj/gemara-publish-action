@@ -368,3 +368,50 @@ jobs:
             exit 1
           fi
           echo "Regex fallback path outputs verified"
+
+  version-precedence:
+    runs-on: ubuntu-latest
+    # Regression test: a YAML that sets metadata.version keeps it even when
+    # the caller passes tag: latest — the tag is a rescue for versionless
+    # files, never an override.
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish versioned YAML with tag latest
+        id: publish
+        uses: ./
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/version-precedence
+          tag: latest
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+
+      - name: Assert the file's version survived the tag
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          oras pull "localhost:5000/test/version-precedence:latest" -o "$dir"
+          pulled="$(find "$dir" -name '*.yaml' | head -1)"
+          [[ -n "${pulled}" ]] || { echo "::error::No YAML layer in pulled artifact"; ls -la "$dir"; exit 1; }
+          grep -q 'version: "0.0.1"' "${pulled}" || {
+            echo "::error::Expected the YAML's version 0.0.1 to survive tag: latest"
+            cat "${pulled}"; exit 1
+          }
+          if grep -q 'version: "latest"' "${pulled}"; then
+            echo "::error::tag: latest was stamped over the YAML's version"
+            exit 1
+          fi
+          echo "Version precedence verified: the file's version is kept; the tag is only the push label"

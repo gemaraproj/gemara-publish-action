@@ -97,8 +97,8 @@ inputs:
     description: >-
       Artifact version stamped into the bundle's metadata.version before
       packing (overrides the file's value). Passed as --version to grcli.
-      In direct mode, defaults to the tag input so callers whose YAML
-      omits metadata.version do not need a separate input.
+      In direct mode, the tag input supplies a version only when the YAML
+      omits metadata.version; a file that carries a version keeps it.
     required: false
     default: ""
   working_directory:

@@ -22,6 +22,23 @@ normalize_oci_digest() {
   return 1
 }
 
+# Exit 0 when the Gemara YAML at $1 carries a non-empty metadata.version.
+# Usage: yaml_has_metadata_version <file>
+#   Degrades to "no version" (exit 1) on any parse failure, which makes the
+#   caller fall back to the tag — the pre-existing behavior.
+yaml_has_metadata_version() {
+  python3 - "$1" << 'PYEOF'
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        doc = yaml.safe_load(f)
+    version = (doc or {}).get("metadata", {}).get("version")
+    sys.exit(0 if version else 1)
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
 # Validate that a resolved path stays inside GITHUB_WORKSPACE.
 # Usage: assert_within_workspace "$resolved_path" ["label"]
 #   Expects: GITHUB_WORKSPACE to be set.
