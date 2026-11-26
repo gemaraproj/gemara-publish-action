@@ -6,4 +6,7 @@
 # .vscode/
 # ORAS local registry directories (created during local testing)
 localhost:*/
+# Runtime-stamped canary fixture (written inside the checkout so the
+# workspace guard in scripts/publish.sh accepts it)
+hub-canary-catalog.yaml
 docs/superpowers/

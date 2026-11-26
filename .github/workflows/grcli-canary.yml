@@ -12,7 +12,9 @@ name: grcli canary
 #
 # Discipline: results against a moving ref are signal, not proof. Re-verify
 # against the real release tag when it is cut, then update grcli_version and
-# the install-action pin in action.yml. Dispatch-only; no required checks.
+# the install-action pin in action.yml. The hub-mode job is dispatch-only;
+# no required checks. The compat, validate, and direct-mode jobs also run
+# on PRs touching scripts/ and testdata/.
 
 on:
   workflow_dispatch:
@@ -247,17 +249,28 @@ jobs:
 
       - name: Build namespace-matched canary fixture
         env:
-          CANARY_NS: ${{ inputs.canary_namespace || 'spreetam' }}
+          CANARY_NS: ${{ inputs.canary_namespace || 'gemara-publish-action-canary' }}
         run: |
           set -euo pipefail
           # The hub catalog requires metadata.author.id to equal the target
-          # namespace; stamp the dispatch namespace into a runtime copy.
-          count="$(grep -cE '^[[:space:]]*id: canary-namespace$' testdata/hub-minimal-catalog.yaml || true)"
-          [[ "${count}" == "1" ]] || { echo "::error::fixture placeholder missing or duplicated (found ${count})"; exit 1; }
-          sed "s/canary-namespace/${CANARY_NS}/" testdata/hub-minimal-catalog.yaml \
-            > "${RUNNER_TEMP}/hub-canary-catalog.yaml"
+          # namespace; stamp the dispatch namespace into a runtime copy. The
+          # copy must live inside the workspace: publish.sh's
+          # assert_within_workspace guard rejects files outside it (RUNNER_TEMP
+          # is a sibling of the checkout, not inside it).
+          python3 -c '
+          import sys
+          ns, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+          needle = "id: canary-namespace"
+          lines = open(src).read().splitlines(keepends=True)
+          hits = [i for i, l in enumerate(lines) if l.strip() == needle]
+          if len(hits) != 1:
+              print(f"::error::fixture placeholder missing or duplicated (found {len(hits)})")
+              sys.exit(1)
+          lines[hits[0]] = lines[hits[0]].replace(needle, f"id: {ns}")
+          open(dst, "w").write("".join(lines))
+          ' "${CANARY_NS}" testdata/hub-minimal-catalog.yaml "${GITHUB_WORKSPACE}/hub-canary-catalog.yaml"
           echo "Fixture for namespace ${CANARY_NS}:"
-          cat "${RUNNER_TEMP}/hub-canary-catalog.yaml"
+          cat "${GITHUB_WORKSPACE}/hub-canary-catalog.yaml"
 
       - name: Cutover probe with released v0.2.0
         continue-on-error: true
@@ -267,14 +280,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/grcli-v020"
-          oras pull "ghcr.io/gemaraproj/grcli:v0.2.0" --platform linux/amd64
+          # Digest-pinned (index digest for the v0.2.0 tag, resolved from
+          # ghcr.io): this job holds id-token: write, so the binary must not
+          # be fetched by mutable tag. If v0.2.0 is ever re-tagged, update
+          # the digest — do not drop back to the tag.
+          oras pull "ghcr.io/gemaraproj/grcli@sha256:5a60fd976ab3be38768830b69a883c66fd58a091cf464917f801fcd63c633ee1" --platform linux/amd64
           install grcli "${RUNNER_TEMP}/grcli-v020/grcli"
           # Expected outcomes:
           #   401 UNAUTHORIZED at first blob push -> hub is staging-only (cutover done)
           #   success                            -> hub still accepts direct pushes (pre-cutover)
           #   auth/trusted-publisher error        -> binding missing for this repo
           if GRCLI_URL="${GRCLI_URL}" "${RUNNER_TEMP}/grcli-v020/grcli" publish \
-              -f "${RUNNER_TEMP}/hub-canary-catalog.yaml" --license Apache-2.0 \
+              -f "${GITHUB_WORKSPACE}/hub-canary-catalog.yaml" --license Apache-2.0 \
               --repository "${CANARY_NS}/cutover-probe"; then
             echo "::notice::v0.2.0 publish SUCCEEDED — hub has NOT cut over to staging-only yet."
           else
@@ -285,7 +302,7 @@ jobs:
         id: publish
         env:
           INPUT_WORKING_DIRECTORY: "."
-          INPUT_FILE: ${{ runner.temp }}/hub-canary-catalog.yaml
+          INPUT_FILE: ${{ github.workspace }}/hub-canary-catalog.yaml
           INPUT_LICENSE: Apache-2.0
           INPUT_REPOSITORY: ${{ inputs.canary_namespace }}/minimal-catalog
           INPUT_TAG: ""
