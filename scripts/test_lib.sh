@@ -57,6 +57,38 @@ assert_fail "rejects non-hex" normalize_oci_digest "sha256:zzzzzz0123456789abcde
 assert_fail "rejects empty" normalize_oci_digest ""
 
 echo ""
+echo "=== yaml_has_metadata_version ==="
+
+YAMLDIR=$(mktemp -d)
+trap 'rm -rf "${TMPCONTAINER:-}" "${YAMLDIR:-}"' EXIT
+
+printf 'metadata:\n  version: 1.2.3\n' > "${YAMLDIR}/versioned.yaml"
+printf 'metadata:\n  author: someone\n' > "${YAMLDIR}/versionless.yaml"
+printf 'metadata:\n  version: ""\n' > "${YAMLDIR}/empty-version.yaml"
+printf 'metadata: [not, a, map]\n' > "${YAMLDIR}/malformed.yaml"
+: > "${YAMLDIR}/empty.yaml"
+
+(yaml_has_metadata_version "${YAMLDIR}/versioned.yaml" 2>/dev/null)
+assert_eq "versioned file -> 0" "0" "$?"
+
+(yaml_has_metadata_version "${YAMLDIR}/versionless.yaml" 2>/dev/null)
+assert_eq "versionless file -> 1" "1" "$?"
+
+(yaml_has_metadata_version "${YAMLDIR}/empty-version.yaml" 2>/dev/null)
+assert_eq "empty metadata.version -> 1" "1" "$?"
+
+(yaml_has_metadata_version "${YAMLDIR}/malformed.yaml" 2>/dev/null)
+assert_eq "malformed YAML degrades to 1 (tag fallback)" "1" "$?"
+
+(yaml_has_metadata_version "${YAMLDIR}/empty.yaml" 2>/dev/null)
+assert_eq "empty file degrades to 1 (tag fallback)" "1" "$?"
+
+(yaml_has_metadata_version "${YAMLDIR}/does-not-exist.yaml" 2>/dev/null)
+assert_eq "missing file degrades to 1 (tag fallback)" "1" "$?"
+
+rm -rf "${YAMLDIR}"
+
+echo ""
 echo "=== validate_working_directory ==="
 
 # Set up a temp workspace to test traversal.

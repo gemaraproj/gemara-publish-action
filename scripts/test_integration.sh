@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# allow-fake-secrets: this suite uses dummy credentials ("test") for a
+# local, unauthenticated registry:2 container; nothing here is a real secret.
 #
 # Integration tests for publish.sh and finalize.sh.
-# Requires: podman (or docker), oras, bash 4+.
+# Requires: podman or docker, oras, bash 4+, python3.
 #
 # Tests:
 #   1. Hub mode publish path — digest extraction from grcli output
@@ -10,8 +12,10 @@
 #   3. validate_working_directory rejection via publish.sh entry point
 #   4. finalize.sh rejects empty SOURCE_DIGEST
 #   5. finalize.sh rejects malformed SOURCE_DIGEST
+#   6. Hub mode finalize — registry discovery, source_ref fallbacks
 #
 # Run: bash scripts/test_integration.sh
+# In CI (CI=true) missing tools fail the run instead of skipping.
 
 set -uo pipefail
 
@@ -21,12 +25,13 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PASS=0
 FAIL=0
 CONTAINER_NAME="test-registry-$$"
+CONTAINER_RUNTIME=""
 REGISTRY_PORT=""
 TMPDIR_TEST=""
 
 cleanup() {
-  if [[ -n "${CONTAINER_NAME}" ]]; then
-    podman rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+  if [[ -n "${CONTAINER_NAME}" && -n "${CONTAINER_RUNTIME}" ]]; then
+    "${CONTAINER_RUNTIME}" rm -f "${CONTAINER_NAME}" 2>/dev/null || true
   fi
   if [[ -n "${TMPDIR_TEST}" ]]; then
     rm -rf "${TMPDIR_TEST}"
@@ -62,19 +67,33 @@ echo "=== Setup ==="
 TMPDIR_TEST=$(mktemp -d)
 TMPDIR_TEST=$(cd "${TMPDIR_TEST}" && pwd -P)
 
-if ! command -v podman &>/dev/null; then
-  echo "SKIP: podman not found"
+# Container runtime: prefer podman, fall back to docker (GitHub-hosted
+# runners ship docker; local dev boxes commonly have either).
+if command -v podman &>/dev/null; then
+  CONTAINER_RUNTIME="podman"
+elif command -v docker &>/dev/null; then
+  CONTAINER_RUNTIME="docker"
+else
+  echo "SKIP: no container runtime found (podman or docker)"
+  if [[ "${CI:-}" == "true" ]]; then
+    echo "::error::test_integration.sh requires podman or docker in CI — a silent skip here would read as a pass."
+    exit 1
+  fi
   exit 0
 fi
 if ! command -v oras &>/dev/null; then
   echo "SKIP: oras not found"
+  if [[ "${CI:-}" == "true" ]]; then
+    echo "::error::test_integration.sh requires oras in CI — a silent skip here would read as a pass."
+    exit 1
+  fi
   exit 0
 fi
 
 REGISTRY_PORT=5555
-podman run -d --name "${CONTAINER_NAME}" -p "${REGISTRY_PORT}:5000" \
+"${CONTAINER_RUNTIME}" run -d --name "${CONTAINER_NAME}" -p "${REGISTRY_PORT}:5000" \
   docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null 2>&1
-echo "Registry started on localhost:${REGISTRY_PORT}"
+echo "Registry started on localhost:${REGISTRY_PORT} (${CONTAINER_RUNTIME})"
 
 registry_ready=false
 for i in {1..10}; do
@@ -198,6 +217,37 @@ else
   ((FAIL++))
 fi
 
+# ── Test 2b: no_sign=true with verify_source=true — verification skipped ──
+echo ""
+echo "=== Test 2b: no_sign=true with verify_source=true ==="
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/nosign-verify-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+export VERIFY_SOURCE="true"
+# Empty password skips the registry login block (cosign is never invoked:
+# the point of this test is the gate, and the suite must not depend on
+# docker being present for it).
+SAVED_PASSWORD="${PASSWORD}"
+export PASSWORD=""
+
+nosign_verify_rc=0
+nosign_verify_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || nosign_verify_rc=$?
+
+assert_eq "finalize with no_sign + verify_source exits 0" "0" "$nosign_verify_rc"
+assert_contains "warns about the no_sign/verify_source interaction" "verify_source is true but no_sign is true" "${nosign_verify_output}"
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  vs=$(grep '^verified_source=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "verified_source is skipped despite verify_source=true" "skipped" "${vs}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
+export VERIFY_SOURCE="false"
+export PASSWORD="${SAVED_PASSWORD}"
+
 # ── Test 3: validate_working_directory rejects traversal ─────
 echo ""
 echo "=== Test 3: validate_working_directory rejects traversal ==="
@@ -291,6 +341,87 @@ else
   ((FAIL++))
 fi
 assert_contains "error mentions digest format" "Expected sha256" "${bad_output}"
+
+# ── Test 6: Hub mode finalize — discovery + source_ref fallbacks ─
+echo ""
+echo "=== Test 6: Hub mode finalize — registry discovery, source_ref fallbacks ==="
+
+HUB_FIXTURE_DIR="${TMPDIR_TEST}/hub-www"
+mkdir -p "${HUB_FIXTURE_DIR}/.well-known"
+cat > "${HUB_FIXTURE_DIR}/.well-known/grc-store-configuration" << 'JSON'
+{"registry_url": "http://localhost:5555"}
+JSON
+
+python3 -m http.server 8099 --directory "${HUB_FIXTURE_DIR}" >/dev/null 2>&1 &
+HTTP_SERVER_PID=$!
+
+# Give the server a moment to bind.
+http_ready=false
+for _ in {1..10}; do
+  if curl -sf "http://localhost:8099/.well-known/grc-store-configuration" >/dev/null 2>&1; then
+    http_ready=true
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${http_ready}" != "true" ]]; then
+  echo "FAIL: mock hub discovery server did not start"
+  kill "${HTTP_SERVER_PID}" 2>/dev/null || true
+  exit 1
+fi
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/hub-finalize-output.txt"
+> "${GITHUB_OUTPUT}"
+
+export GITHUB_OUTPUT
+export PUBLISH_MODE="hub"
+export GRCLI_URL="http://localhost:8099"
+export REPOSITORY="test/hub-repo"
+export TAG=""
+export SOURCE_DIGEST="${REAL_DIGEST}"
+export PROMOTE="false"
+
+hub_fin_rc=0
+hub_fin_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || hub_fin_rc=$?
+
+assert_eq "hub finalize with discovery exits 0" "0" "$hub_fin_rc"
+if [[ "${hub_fin_output}" == *"Hub registry discovery failed"* ]]; then
+  echo "  FAIL: discovery unexpectedly failed with the mock hub up"
+  ((FAIL++))
+else
+  echo "  PASS: no discovery warning with the mock hub up"
+  ((PASS++))
+fi
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  sr=$(grep '^source_ref=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "source_ref includes discovered host" "localhost:5555/test/hub-repo@${REAL_DIGEST}" "${sr}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
+# Discovery failure: hub unreachable -> warning, host-less fallback.
+GITHUB_OUTPUT="${TMPDIR_TEST}/hub-finalize-nodiscovery-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+export GRCLI_URL="http://localhost:1"
+
+nodisc_rc=0
+nodisc_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || nodisc_rc=$?
+
+assert_eq "hub finalize without discovery exits 0" "0" "$nodisc_rc"
+assert_contains "discovery failure warns" "Hub registry discovery failed" "${nodisc_output}"
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  sr=$(grep '^source_ref=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "source_ref falls back host-less" "test/hub-repo@${REAL_DIGEST}" "${sr}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
+kill "${HTTP_SERVER_PID}" 2>/dev/null || true
 
 # ── Results ──────────────────────────────────────────────────
 echo ""
