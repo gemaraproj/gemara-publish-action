@@ -7,12 +7,16 @@
 # Requires: podman or docker, oras, bash 4+, python3.
 #
 # Tests:
-#   1. Hub mode publish path — digest extraction from grcli output
-#   2. Direct mode with no_sign=true — signing skipped, outputs correct
-#   3. validate_working_directory rejection via publish.sh entry point
-#   4. finalize.sh rejects empty SOURCE_DIGEST
-#   5. finalize.sh rejects malformed SOURCE_DIGEST
-#   6. Hub mode finalize — registry discovery, source_ref fallbacks
+#   1.  Hub mode publish path — digest extraction from grcli output
+#   2.  Direct mode with no_sign=true — signing skipped, outputs correct
+#   2b. no_sign=true with verify_source=true — verification skipped with warning
+#   2c. Direct-mode promotion with :latest fallback — plus password no-leak
+#   3.  validate_working_directory rejection via publish.sh entry point
+#   4.  finalize.sh rejects empty SOURCE_DIGEST
+#   5.  finalize.sh rejects malformed SOURCE_DIGEST
+#   6.  Hub mode finalize — registry discovery, source_ref fallbacks
+#   6b. Hub mode without repository — digest-only source_ref with warning
+#   7.  Hub-mode promotion — repository-required error and discovery-based copy
 #
 # Run: bash scripts/test_integration.sh
 # In CI (CI=true) missing tools fail the run instead of skipping.
@@ -248,6 +252,56 @@ fi
 export VERIFY_SOURCE="false"
 export PASSWORD="${SAVED_PASSWORD}"
 
+# ── Test 2c: direct-mode promotion, :latest fallback, no password leak ──
+echo ""
+echo "=== Test 2c: direct promotion with :latest fallback and password hygiene ==="
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/promo-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+# Marker passwords: the spec requires the action SHALL NOT print the
+# password to logs; the captured output is asserted clean below.
+export PASSWORD="ci-marker-src-password-DoNotPrint"
+export DEST_PASSWORD="ci-marker-dest-password-DoNotPrint"
+export PUBLISH_MODE="direct"
+export REGISTRY="localhost:${REGISTRY_PORT}"
+export REPOSITORY="test/nosign"
+export TAG=""
+export PROMOTE="true"
+export DEST_REGISTRY="localhost:${REGISTRY_PORT}"
+export DEST_REPOSITORY="test/promo-dest"
+export DEST_TAG=""
+export DEST_USERNAME="test"
+export TRUST_MODE="copy-only"
+export SIGN_DESTINATION="false"
+export VERIFY_DESTINATION="false"
+
+promo_rc=0
+promo_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || promo_rc=$?
+
+assert_eq "direct promotion with empty tags exits 0" "0" "$promo_rc"
+assert_contains "warns about the :latest fallback" "Neither destination_tag nor tag is set" "${promo_output}"
+if [[ "${promo_output}" == *"ci-marker-src-password-DoNotPrint"* || "${promo_output}" == *"ci-marker-dest-password-DoNotPrint"* ]]; then
+  echo "  FAIL: a password marker leaked into the output (spec: SHALL NOT print the password)"
+  ((FAIL++))
+else
+  echo "  PASS: no password marker leaked into the output"
+  ((PASS++))
+fi
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  dd=$(grep '^destination_digest=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  vd=$(grep '^verified_destination=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "destination_digest matches source" "${REAL_DIGEST}" "${dd}"
+  assert_eq "verified_destination is skipped" "skipped" "${vd}"
+  # The fallback must actually have pushed :latest.
+  latest_digest=$(oras resolve "localhost:${REGISTRY_PORT}/test/promo-dest:latest" 2>/dev/null | tr -d '\r\n')
+  assert_eq ":latest tag pushed by the fallback" "${REAL_DIGEST}" "${latest_digest}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
 # ── Test 3: validate_working_directory rejects traversal ─────
 echo ""
 echo "=== Test 3: validate_working_directory rejects traversal ==="
@@ -416,6 +470,87 @@ assert_contains "discovery failure warns" "Hub registry discovery failed" "${nod
 if [[ -f "${GITHUB_OUTPUT}" ]]; then
   sr=$(grep '^source_ref=' "${GITHUB_OUTPUT}" | cut -d= -f2)
   assert_eq "source_ref falls back host-less" "test/hub-repo@${REAL_DIGEST}" "${sr}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
+kill "${HTTP_SERVER_PID}" 2>/dev/null || true
+
+# ── Test 6b: Hub mode finalize without repository — digest-only source_ref ─
+echo ""
+echo "=== Test 6b: Hub mode without repository (digest-only source_ref) ==="
+
+# Restart the mock hub for this and the following hub tests.
+python3 -m http.server 8099 --directory "${HUB_FIXTURE_DIR}" >/dev/null 2>&1 &
+HTTP_SERVER_PID=$!
+
+GITHUB_OUTPUT="${TMPDIR_TEST}/hub-finalize-norepo-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+export PUBLISH_MODE="hub"
+export GRCLI_URL="http://localhost:8099"
+export REPOSITORY=""
+export TAG=""
+export PROMOTE="false"
+
+norepo_rc=0
+norepo_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || norepo_rc=$?
+
+assert_eq "hub finalize without repository exits 0" "0" "$norepo_rc"
+assert_contains "warns source_ref is digest-only" "source_ref is digest-only" "${norepo_output}"
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  sr=$(grep '^source_ref=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "source_ref is digest-only" "@${REAL_DIGEST}" "${sr}"
+else
+  echo "  FAIL: GITHUB_OUTPUT not written"
+  ((FAIL++))
+fi
+
+# ── Test 7: Hub-mode promotion branches ──────────────────────
+echo ""
+echo "=== Test 7: Hub-mode promotion (repository required, discovery-based copy) ==="
+
+# Error branch: hub promotion without repository fails with the documented error.
+GITHUB_OUTPUT="${TMPDIR_TEST}/hub-promo-error-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+export PROMOTE="true"
+export DEST_REGISTRY="localhost:${REGISTRY_PORT}"
+export DEST_REPOSITORY="test/promo-hub-dest"
+export DEST_TAG="2.0.0"
+export DEST_USERNAME="test"
+export DEST_PASSWORD="test"
+export TRUST_MODE="copy-only"
+export SIGN_DESTINATION="false"
+export VERIFY_DESTINATION="false"
+
+hubpromo_err_rc=0
+hubpromo_err_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || hubpromo_err_rc=$?
+
+assert_eq "hub promotion without repository fails" "1" "$hubpromo_err_rc"
+assert_contains "error names the repository requirement" "repository input is required for promotion in hub mode" "${hubpromo_err_output}"
+
+# Success branch: with repository set, the discovered host builds the source
+# reference and oras copy promotes across (same registry, different repo).
+GITHUB_OUTPUT="${TMPDIR_TEST}/hub-promo-output.txt"
+> "${GITHUB_OUTPUT}"
+export GITHUB_OUTPUT
+# test/nosign exists in the registry from Test 2; the mock hub's discovery
+# points at the same registry, so the copy resolves.
+export REPOSITORY="test/nosign"
+
+hubpromo_rc=0
+hubpromo_output=$(bash "${SCRIPT_DIR}/finalize.sh" 2>&1) || hubpromo_rc=$?
+
+assert_eq "hub promotion with repository exits 0" "0" "$hubpromo_rc"
+
+if [[ -f "${GITHUB_OUTPUT}" ]]; then
+  sr=$(grep '^source_ref=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  dd=$(grep '^destination_digest=' "${GITHUB_OUTPUT}" | cut -d= -f2)
+  assert_eq "source_ref uses the discovered host" "localhost:${REGISTRY_PORT}/test/nosign@${REAL_DIGEST}" "${sr}"
+  assert_eq "destination_digest matches source" "${REAL_DIGEST}" "${dd}"
 else
   echo "  FAIL: GITHUB_OUTPUT not written"
   ((FAIL++))

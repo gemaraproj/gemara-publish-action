@@ -550,6 +550,67 @@ jobs:
           oras manifest fetch "localhost:5000/test/promo-copy-dest@${DEST_DIGEST}" >/dev/null
           echo "copy-only promotion verified: digest match and manifest resolvable"
 
+  promotion-copy-referrers:
+    runs-on: ubuntu-latest
+    # Covers the copy-referrers arm of the trust_mode case statement in
+    # finalize.sh (oras copy --recursive): the only arm where carrying
+    # signature referrers across registries actually matters.
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish and promote (trust_mode=copy-referrers)
+        id: promote
+        uses: ./
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/promo-referrers-source
+          tag: "1.0.0"
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+          no_sign: "true"
+          promote_to_destination: "true"
+          destination_registry: localhost:5000
+          destination_repository: test/promo-referrers-dest
+          destination_tag: "1.0.0"
+          destination_username: test
+          destination_password: test
+          trust_mode: copy-referrers
+          # The source is unsigned in this job (no_sign), so no referrers
+          # exist to copy and nothing to verify on the destination — this
+          # job covers the --recursive copy arm and the output contract.
+          sign_destination: "false"
+          verify_destination: "false"
+
+      - name: Assert copy-referrers promotion outputs
+        env:
+          DIGEST: ${{ steps.promote.outputs.digest }}
+          DEST_DIGEST: ${{ steps.promote.outputs.destination_digest }}
+          VERIFIED_DEST: ${{ steps.promote.outputs.verified_destination }}
+        run: |
+          set -euo pipefail
+          [[ "${DEST_DIGEST}" == "${DIGEST}" ]] || {
+            echo "::error::destination_digest does not match source digest: ${DEST_DIGEST} vs ${DIGEST}"
+            exit 1
+          }
+          [[ "${VERIFIED_DEST}" == "skipped" ]] || {
+            echo "::error::expected verified_destination=skipped with no_sign=true, got ${VERIFIED_DEST}"
+            exit 1
+          }
+          oras manifest fetch "localhost:5000/test/promo-referrers-dest@${DEST_DIGEST}" >/dev/null
+          echo "copy-referrers promotion verified: digest match and manifest resolvable"
+
   regex-fallback:
     runs-on: ubuntu-latest
     # Tests the layout tag regex extraction path: publish minimal-catalog.yaml
