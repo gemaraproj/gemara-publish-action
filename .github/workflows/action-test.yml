@@ -141,20 +141,67 @@ jobs:
           assert m['artifactType'] == 'application/vnd.gemara.bundle.v1', f'bad artifactType: {m[\"artifactType\"]}'
           assert len(m['layers']) > 0, 'no layers'
           assert 'Apache-2.0' in m.get('annotations', {}).get('org.opencontainers.image.licenses', ''), 'missing license'
-          # Verify the version was stamped: fetch the config blob and check
-          config_digest = m['config']['digest']
-          print(f'Config digest: {config_digest}')
           print('Version-flag manifest verified')
           "
-          # Fetch and verify the config blob contains the stamped version
-          CONFIG_DIGEST=$(oras manifest fetch localhost:5000/test/catalog-versioned:v0.1.0-test | python3 -c "import sys,json; print(json.load(sys.stdin)['config']['digest'])")
-          oras blob fetch "localhost:5000/test/catalog-versioned@${CONFIG_DIGEST}" --output - | python3 -c "
-          import sys, json
-          config = json.load(sys.stdin)
-          version = config.get('version', config.get('metadata', {}).get('version', ''))
-          assert '0.1.0-test' in str(config), f'version 0.1.0-test not found in config: {json.dumps(config, indent=2)}'
-          print(f'Version stamp verified in config')
-          "
+          # Assert the stamped version on the packed YAML layer itself — the
+          # documented contract for the version input — not a substring match
+          # over the serialized config (which any field could satisfy).
+          dir="$(mktemp -d)"
+          oras pull "localhost:5000/test/catalog-versioned:v0.1.0-test" -o "$dir"
+          pulled="$(find "$dir" -name '*.yaml' | head -1)"
+          [[ -n "${pulled}" ]] || { echo "::error::No YAML layer in pulled artifact"; ls -la "$dir"; exit 1; }
+          python3 - "$pulled" << 'PY'
+          import sys, yaml
+          doc = yaml.safe_load(open(sys.argv[1]))
+          version = (doc or {}).get("metadata", {}).get("version")
+          assert version == "0.1.0-test", f"expected metadata.version == '0.1.0-test', got {version!r}"
+          print("Version stamp verified on the packed YAML layer")
+          PY
+
+  tag-rescue:
+    runs-on: ubuntu-latest
+    # Third branch of the version precedence chain: a versionless YAML with
+    # NO version input gets the tag stamped as metadata.version (publish.sh
+    # passes the tag as --version only when the YAML omits metadata.version).
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish versionless catalog with tag only (no version input)
+        id: publish
+        uses: ./
+        with:
+          file: testdata/minimal-catalog-no-version.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/tag-rescue
+          tag: v9.9.9
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+
+      - name: Assert the tag rescued the versionless YAML
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          oras pull "localhost:5000/test/tag-rescue:v9.9.9" -o "$dir"
+          pulled="$(find "$dir" -name '*.yaml' | head -1)"
+          [[ -n "${pulled}" ]] || { echo "::error::No YAML layer in pulled artifact"; ls -la "$dir"; exit 1; }
+          python3 - "$pulled" << 'PY'
+          import sys, yaml
+          doc = yaml.safe_load(open(sys.argv[1]))
+          version = (doc or {}).get("metadata", {}).get("version")
+          assert version == "v9.9.9", f"expected the tag v9.9.9 to rescue metadata.version, got {version!r}"
+          print("Tag rescue verified: the tag supplies metadata.version for a versionless YAML")
+          PY
 
   input-validation:
     runs-on: ubuntu-latest
@@ -280,6 +327,48 @@ jobs:
           fi
           echo "Correctly rejected validate without spec dir"
 
+      - name: Checkout Gemara spec
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gemaraproj/gemara
+          path: gemara-spec
+          persist-credentials: false
+
+      # Spec scenario "Validation failure": invalid root YAML with
+      # validate=true and a spec dir must fail BEFORE pack or push. The
+      # registry credentials are valid, so the Validate step is the only
+      # possible failure; the assertion also checks nothing was pushed.
+      - name: Test schema-validation failure (should fail)
+        id: validate-invalid
+        uses: ./
+        continue-on-error: true
+        with:
+          file: testdata/invalid-catalog.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/validate-invalid
+          tag: latest
+          username: test
+          password: test
+          validate: "true"
+          gemara_spec_dir: gemara-spec
+
+      - name: Assert schema-validation failure was rejected before push
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.validate-invalid.outcome }}" != "failure" ]]; then
+            echo "::error::Expected action to fail on invalid YAML with validate=true, got: ${{ steps.validate-invalid.outcome }}"
+            exit 1
+          fi
+          # registry:2 returns 404 for tags/list on a repository that was
+          # never pushed to — 200 means something landed despite the failure.
+          if curl -sf "http://localhost:5000/v2/test/validate-invalid/tags/list" >/dev/null 2>&1; then
+            echo "::error::Something was pushed despite the validation failure"
+            exit 1
+          fi
+          echo "Correctly rejected invalid YAML before pack or push"
+
       - name: Test working_directory traversal (should fail)
         id: traversal
         uses: ./
@@ -322,6 +411,139 @@ jobs:
             exit 1
           fi
           echo "Correctly rejected file path escape"
+
+  promotion:
+    runs-on: ubuntu-latest
+    # Covers the promotion happy path in finalize.sh: ORAS copy, the
+    # source/destination digest-match integrity check, the no_sign gate on
+    # destination signing/verification, and the promotion output contract
+    # (spec: "Promotion outputs emitted"). The only other promotion test
+    # covers the failure case (input-validation job).
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish and promote (trust_mode=resign, no_sign)
+        id: promote
+        uses: ./
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/promotion-source
+          tag: "1.0.0"
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+          no_sign: "true"
+          promote_to_destination: "true"
+          destination_registry: localhost:5000
+          destination_repository: test/promotion-dest
+          destination_tag: "1.0.0"
+          destination_username: test
+          destination_password: test
+          trust_mode: resign
+
+      - name: Assert promotion outputs and digest match
+        env:
+          DIGEST: ${{ steps.promote.outputs.digest }}
+          DEST_REF: ${{ steps.promote.outputs.destination_ref }}
+          DEST_DIGEST: ${{ steps.promote.outputs.destination_digest }}
+          VERIFIED_DEST: ${{ steps.promote.outputs.verified_destination }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Invalid source digest: ${DIGEST}"; exit 1; }
+          [[ "${DEST_DIGEST}" == "${DIGEST}" ]] || {
+            echo "::error::destination_digest does not match source digest: ${DEST_DIGEST} vs ${DIGEST}"
+            exit 1
+          }
+          [[ "${DEST_REF}" == "localhost:5000/test/promotion-dest@${DIGEST}" ]] || {
+            echo "::error::destination_ref mismatch: got ${DEST_REF}"
+            exit 1
+          }
+          [[ "${VERIFIED_DEST}" == "skipped" ]] || {
+            echo "::error::expected verified_destination=skipped with no_sign=true, got ${VERIFIED_DEST}"
+            exit 1
+          }
+          echo "Promotion outputs verified: digest match, destination_ref correct, verification skipped (no_sign)"
+
+      - name: Assert promoted content is the same bundle
+        run: |
+          set -euo pipefail
+          src_dir="$(mktemp -d)"; dst_dir="$(mktemp -d)"
+          oras pull "localhost:5000/test/promotion-source:1.0.0" -o "$src_dir"
+          oras pull "localhost:5000/test/promotion-dest:1.0.0" -o "$dst_dir"
+          src_yaml="$(find "$src_dir" -name '*.yaml' | head -1)"
+          dst_yaml="$(find "$dst_dir" -name '*.yaml' | head -1)"
+          [[ -n "${src_yaml}" && -n "${dst_yaml}" ]] || { echo "::error::missing YAML layer"; exit 1; }
+          diff "${src_yaml}" "${dst_yaml}"
+          grep -q 'version: "0.0.1"' "${dst_yaml}" || {
+            echo "::error::promoted bundle lost the YAML's version"; cat "${dst_yaml}"; exit 1
+          }
+          echo "Promoted bundle is byte-identical content to the source"
+
+  promotion-copy-only:
+    runs-on: ubuntu-latest
+    # Covers the copy-only arm of the trust_mode case statement in
+    # finalize.sh (plain oras copy, no resign semantics).
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish and promote (trust_mode=copy-only)
+        id: promote
+        uses: ./
+        with:
+          file: testdata/minimal-catalog.yaml
+          license: Apache-2.0
+          registry: localhost:5000
+          repository: test/promo-copy-source
+          tag: "1.0.0"
+          username: test
+          password: test
+          validate: "false"
+          sign_source: "false"
+          verify_source: "false"
+          no_sign: "true"
+          promote_to_destination: "true"
+          destination_registry: localhost:5000
+          destination_repository: test/promo-copy-dest
+          destination_tag: "1.0.0"
+          destination_username: test
+          destination_password: test
+          trust_mode: copy-only
+
+      - name: Assert copy-only promotion outputs
+        env:
+          DIGEST: ${{ steps.promote.outputs.digest }}
+          DEST_DIGEST: ${{ steps.promote.outputs.destination_digest }}
+          VERIFIED_DEST: ${{ steps.promote.outputs.verified_destination }}
+        run: |
+          set -euo pipefail
+          [[ "${DEST_DIGEST}" == "${DIGEST}" ]] || {
+            echo "::error::destination_digest does not match source digest: ${DEST_DIGEST} vs ${DIGEST}"
+            exit 1
+          }
+          [[ "${VERIFIED_DEST}" == "skipped" ]] || {
+            echo "::error::expected verified_destination=skipped with no_sign=true, got ${VERIFIED_DEST}"
+            exit 1
+          }
+          oras manifest fetch "localhost:5000/test/promo-copy-dest@${DEST_DIGEST}" >/dev/null
+          echo "copy-only promotion verified: digest match and manifest resolvable"
 
   regex-fallback:
     runs-on: ubuntu-latest
