@@ -55,23 +55,14 @@ verify_ref() {
 if [[ "${PUBLISH_MODE}" == "hub" ]]; then
   # ── Hub mode finalize ─────────────────────────────────────
   # grcli handled signing in-process. Discover the hub's registry
-  # host so source_ref is a pullable OCI reference.
+  # host so source_ref is a pullable OCI reference. Discovery
+  # failure degrades to a warning and host-less/digest-only
+  # source_ref fallbacks below — never a hard failure.
   HUB_REGISTRY=""
   if [[ -n "${GRCLI_URL}" ]]; then
-    discovery_err=""
-    if ! discovery_json=$(curl -sf "${GRCLI_URL}/.well-known/grc-store-configuration" 2>&1); then
-      discovery_err="curl failed: ${discovery_json}"
-    elif ! HUB_REGISTRY=$(printf '%s' "${discovery_json}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('registry_url',''))" 2>&1); then
-      discovery_err="JSON parse failed: ${HUB_REGISTRY}"
+    if ! HUB_REGISTRY=$(hub_registry_host "${GRCLI_URL}"); then
+      echo "::warning::Hub registry discovery failed"
       HUB_REGISTRY=""
-    fi
-    if [[ -n "${discovery_err}" ]]; then
-      echo "::warning::Hub registry discovery failed (${discovery_err})"
-      HUB_REGISTRY=""
-    else
-      HUB_REGISTRY="${HUB_REGISTRY#https://}"
-      HUB_REGISTRY="${HUB_REGISTRY#http://}"
-      HUB_REGISTRY="${HUB_REGISTRY%/}"
     fi
   fi
   if [[ -n "${HUB_REGISTRY}" && -n "${REPOSITORY}" ]]; then

@@ -52,6 +52,33 @@ assert_within_workspace() {
   fi
 }
 
+# Discover the hub registry host from a hub's .well-known configuration.
+# Usage: hub_registry_host <hub_url>
+#   Echoes the registry host (scheme and trailing slash stripped) and exits 0,
+#   or exits non-zero with a ::error on stderr. The host is validated against
+#   a strict pattern — no newlines or shell metacharacters — so the result is
+#   safe to write to GITHUB_ENV. Single source of truth for hub discovery:
+#   finalize.sh and the grcli-canary workflow both call this.
+hub_registry_host() {
+  local hub_url="$1" discovery_json host
+  if ! discovery_json=$(curl -sf "${hub_url}/.well-known/grc-store-configuration" 2>&1); then
+    echo "::error::hub discovery request failed: ${discovery_json}" >&2
+    return 1
+  fi
+  if ! host=$(printf '%s' "${discovery_json}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('registry_url',''))" 2>/dev/null); then
+    echo "::error::hub discovery returned unparseable JSON" >&2
+    return 1
+  fi
+  host="${host#https://}"
+  host="${host#http://}"
+  host="${host%/}"
+  if ! [[ "${host}" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+    echo "::error::hub discovery returned an invalid registry host: '${host}'" >&2
+    return 1
+  fi
+  printf '%s' "${host}"
+}
+
 # Validate that the working directory resolves inside GITHUB_WORKSPACE.
 # Exits with error if the resolved path escapes the workspace.
 # Usage: validate_working_directory
