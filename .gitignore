@@ -6,3 +6,4 @@
 # .vscode/
 # ORAS local registry directories (created during local testing)
 localhost:*/
+docs/superpowers/

@@ -73,7 +73,7 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 | `grcli_url` | Hub base URL. When set, enables hub mode. | Hub |
 | `no_sign` | Skip signing (`"true"` / `"false"`). | Both |
 | `registry` | Registry host (e.g. `ghcr.io`). | Direct |
-| `repository` | Required in direct mode. Optional override in hub mode. | Both |
+| `repository` | Required in direct mode. In hub mode, must match the coordinate the hub derives from the artifact (see Hub mode) — never an override; required when promoting. | Both |
 | `tag` | Tag to push. Required in direct mode. Also supplies `metadata.version` when the YAML omits it; a file that carries a version keeps it. | Direct |
 | `username`, `password` | Source registry auth. | Direct |
 | `validate` | Run `grcli validate` before publish (default `false`; requires `gemara_spec_dir`). | Both |
@@ -95,7 +95,7 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 | Output | Description |
 |--------|-------------|
 | `digest` / `source_digest` | Source manifest digest, `sha256:` + 64 hex. |
-| `source_ref` | `registry/repository@sha256:...` (direct) or `repository@sha256:...` (hub). |
+| `source_ref` | `registry/repository@sha256:...` (both modes; hub mode resolves the registry host via `.well-known` discovery — host-less `repository@sha256:...` only if discovery fails, with a warning). |
 | `destination_digest` | Destination digest after promotion. |
 | `destination_ref` | Destination image reference with digest. |
 | `verified_source` | `true` if source verify passed, `skipped` if not attempted. |
@@ -171,6 +171,33 @@ cut-over hub refuses with 401; grcli v0.3.0 and later push to
 `staging/<namespace>/<id>` first, which a pre-cutover hub refuses. A 401
 at the first blob push in hub mode means the pin and the hub are on
 opposite sides of the cutover.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#2f6dab',
+  'primaryTextColor': '#1e1e1e',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#eef2f8',
+  'tertiaryColor': 'transparent',
+  'tertiaryTextColor': '#7c8ba1',
+  'tertiaryBorderColor': '#7c8ba1',
+  'clusterBkg': 'transparent',
+  'clusterBorder': '#7c8ba1',
+  'titleColor': '#7c8ba1',
+  'noteBkgColor': '#eef2f8',
+  'noteTextColor': '#1e1e1e',
+  'fontFamily': 'system-ui, sans-serif'
+}, 'themeCSS': '.node .nodeLabel{color:#ffffff!important;fill:#ffffff!important;}'}}%%
+stateDiagram-v2
+  [*] --> PreCutover
+  PreCutover --> CutOver: hub deploys the staging cutover
+  CutOver --> [*]
+  PreCutover: v0.2.0 pin - served-repo push accepted
+  PreCutover: v0.3.0+ pin - staging push refused with 401
+  CutOver: v0.2.0 pin - served-repo push refused with 401
+  CutOver: v0.3.0+ pin - staging push and sync accepted
+```
 
 Common hub-mode errors:
 

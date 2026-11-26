@@ -1,7 +1,11 @@
 ---
 layout: page
 title: Delegate all bundle semantics to go-gemara SDK
+status: superseded by 0004
+date: 2026-05-08
 ---
+
+# Delegate all bundle semantics to go-gemara SDK
 
 - **ADR:** 0002
 - **Status:** Superseded by ADR-0004
@@ -35,4 +39,4 @@ The action owns only transport and CI concerns: registry authentication, cosign 
 
 ## Alternatives Considered
 
-Implementing bundle assembly directly in the action (handcrafting OCI layer descriptors and manifests) would give the action full control but would duplicate SDK logic and risk format drift between the action and SDK consumers (e.g. `complyctl`).
+Implementing bundle assembly directly in the action (handcrafting OCI layer descriptors and manifests) would give the action full control but would duplicate SDK logic and risk format drift between the action and SDK consumers (e.g. [`complyctl`](https://github.com/complytime/complyctl), the ComplyTime CLI).

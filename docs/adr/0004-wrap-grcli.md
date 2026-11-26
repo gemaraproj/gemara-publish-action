@@ -1,7 +1,11 @@
 ---
 layout: page
 title: Replace embedded grc CLI with grcli dry-run and ORAS push
+status: accepted
+date: 2026-10-02
 ---
+
+# Replace embedded grc CLI with grcli dry-run and ORAS push
 
 - **ADR:** 0004
 - **Status:** Accepted
@@ -78,6 +82,32 @@ source publish.
   `--version` to grcli.
 - Two publish paths to maintain (direct + hub), though they share
   validation, promotion, and output logic.
+
+### Refinements since drafting
+
+These landed during implementation and review; they refine the decisions
+above without reversing any of them.
+
+- The grcli binary's cosign signature is verified at install
+  (`verify: "true"`; cosign installs unconditionally so the check runs in
+  every mode). The install action resolves the tag to a digest before
+  verifying, so a retag cannot bypass the check.
+- Direct-mode version precedence: the `version` input (explicit
+  override), then the YAML's own `metadata.version`, then the `tag` input
+  as a rescue for files that omit the version. The tag never stamps over
+  a version the file already carries.
+- The workspace boundary guard covers the `file` input as well as
+  `working_directory`: an absolute path, `../`, or symlinked file that
+  resolves outside the workspace is rejected.
+- Hub-mode constraints surfaced by live testing: the hub's catalog
+  requires the bundle's `metadata.author.id` to match the repository
+  namespace (`slugify(author.id)/slugify(id)`; a mismatch is refused at
+  sync with `catalog_coordinate_mismatch`); hub mode works only inside
+  GitHub Actions, because grcli's CI auth uses the GitHub Actions OIDC
+  token exclusively; and the grcli pin must match the hub's
+  staging-cutover state — released v0.2.0 pushes the served repository
+  while v0.3.0 and later push `staging/<ns>/<id>` first, so a 401 at the
+  first blob push means pin and hub are on opposite sides of the cutover.
 
 ## Alternatives Considered
 
