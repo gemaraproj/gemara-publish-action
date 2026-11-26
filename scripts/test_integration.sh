@@ -406,23 +406,33 @@ cat > "${HUB_FIXTURE_DIR}/.well-known/grc-store-configuration" << 'JSON'
 {"registry_url": "http://localhost:5555"}
 JSON
 
-python3 -m http.server 8099 --directory "${HUB_FIXTURE_DIR}" >/dev/null 2>&1 &
-HTTP_SERVER_PID=$!
-
-# Give the server a moment to bind.
-http_ready=false
-for _ in {1..10}; do
-  if curl -sf "http://localhost:8099/.well-known/grc-store-configuration" >/dev/null 2>&1; then
-    http_ready=true
-    break
+# Start the mock hub and wait until it answers; fail loudly if it cannot
+# bind (e.g. the previous instance has not released the port yet).
+start_mock_hub() {
+  python3 -m http.server 8099 --directory "${HUB_FIXTURE_DIR}" >/dev/null 2>&1 &
+  HTTP_SERVER_PID=$!
+  local ready=false _
+  for _ in {1..20}; do
+    if curl -sf "http://localhost:8099/.well-known/grc-store-configuration" >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "${ready}" != "true" ]]; then
+    echo "FAIL: mock hub discovery server did not start"
+    kill "${HTTP_SERVER_PID}" 2>/dev/null || true
+    exit 1
   fi
-  sleep 0.5
-done
-if [[ "${http_ready}" != "true" ]]; then
-  echo "FAIL: mock hub discovery server did not start"
+}
+
+stop_mock_hub() {
   kill "${HTTP_SERVER_PID}" 2>/dev/null || true
-  exit 1
-fi
+  # Reap the process so the port is released before any restart.
+  wait "${HTTP_SERVER_PID}" 2>/dev/null || true
+}
+
+start_mock_hub
 
 GITHUB_OUTPUT="${TMPDIR_TEST}/hub-finalize-output.txt"
 > "${GITHUB_OUTPUT}"
@@ -475,15 +485,14 @@ else
   ((FAIL++))
 fi
 
-kill "${HTTP_SERVER_PID}" 2>/dev/null || true
+stop_mock_hub
 
 # ── Test 6b: Hub mode finalize without repository — digest-only source_ref ─
 echo ""
 echo "=== Test 6b: Hub mode without repository (digest-only source_ref) ==="
 
 # Restart the mock hub for this and the following hub tests.
-python3 -m http.server 8099 --directory "${HUB_FIXTURE_DIR}" >/dev/null 2>&1 &
-HTTP_SERVER_PID=$!
+start_mock_hub
 
 GITHUB_OUTPUT="${TMPDIR_TEST}/hub-finalize-norepo-output.txt"
 > "${GITHUB_OUTPUT}"
@@ -556,7 +565,7 @@ else
   ((FAIL++))
 fi
 
-kill "${HTTP_SERVER_PID}" 2>/dev/null || true
+stop_mock_hub
 
 # ── Results ──────────────────────────────────────────────────
 echo ""
