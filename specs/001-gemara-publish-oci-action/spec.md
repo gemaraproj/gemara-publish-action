@@ -87,8 +87,8 @@ The Action must:
 5. **Optional sign/verify:** Keyless cosign sign and verify on the source digest.
 6. **Optional promotion:** Copy source to destination registry with selected trust mode and
    destination sign/verify.
-7. **Output contract:** Append source/destination refs, digests, and verification booleans to
-   `GITHUB_OUTPUT`.
+7. **Output contract:** Append source/destination refs, digests, and verification status outputs
+   (`true`/`skipped`) to `GITHUB_OUTPUT`.
 
 ## Scope boundaries
 
@@ -195,7 +195,13 @@ When `promote_to_destination` is enabled, the Action SHALL honor `trust_mode` (`
   `testdata/minimal-catalog.yaml`. OCI layout structure verified.
   End-to-end tests in `.github/workflows/action-test.yml` exercise direct-mode
   publish, version-flag, and input validation against a local registry.
-- **Backward compatible:** All existing inputs (`registry`, `tag`, `username`, `password`,
-  `sign_source`, `verify_source`) work unchanged. Only `license` is new.
+- **Backward compatible with documented exceptions:** the migration table in
+  [README.md](../../README.md) is the authority. `license` is newly required;
+  `validate` defaults to `false` pending grcli's CUE-registry schema resolution
+  (#46); `verified_source`/`verified_destination` emit `skipped` instead of
+  `false` when not attempted; `oras_version` and `bundle_version` are removed;
+  and `tag` additionally supplies `metadata.version` for YAMLs that omit it.
+  The inputs listed above (`registry`, `tag`, `username`, `password`,
+  `sign_source`, `verify_source`) keep their documented meaning.
 - **Consumers** can pin `grcli_version` and rely on stable
   `with:` / `outputs.digest` semantics documented in [README.md](../../README.md).

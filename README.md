@@ -165,9 +165,9 @@ Hub mode runs only inside GitHub Actions. grcli's CI authentication uses
 the GitHub Actions OIDC token exclusively, and keyless signing — the only
 signature grc.store accepts — needs the same token.
 
-The grcli pin must match the hub's cutover state. Released grcli v0.2.0
+The grcli pin must match the hub's cutover state. The **staging cutover** is the hub-side switch from accepting direct pushes to served repositories to accepting only staging pushes (`staging/<namespace>/<id>`), which the hub promotes to the served repository after its sync check. Released grcli v0.2.0
 pushes to the served repository, which a pre-cutover hub accepts and a
-cut-over hub refuses with 401; grcli v0.3.0 and later push to
+post-cutover hub refuses with 401; grcli v0.3.0 and later push to
 `staging/<namespace>/<id>` first, which a pre-cutover hub refuses. A 401
 at the first blob push in hub mode means the pin and the hub are on
 opposite sides of the cutover.
@@ -210,7 +210,7 @@ Common hub-mode errors:
 ## Repository layout
 
 - **`action.yml`** — Composite action definition (dual-mode: direct + hub).
-- **`scripts/`** — Shell logic for publish and finalize steps (`lib.sh`, `publish.sh`, `finalize.sh`).
+- **`scripts/`** — Shell logic for publish and finalize steps (`lib.sh`, `publish.sh`, `finalize.sh`) plus their tests (`test_lib.sh` unit, `test_integration.sh` integration; both run in CI).
 - **`testdata/`** — Minimal Gemara catalog fixtures and legacy bundle OCI layout for CI tests.
 - **`docs/`** — ADRs (Architectural Decision Records).
 - **`specs/`** — Feature specifications.
@@ -237,6 +237,7 @@ change:
 |--------|-------|---------------|
 | No `license` input | `license` **required** | Add `license: <SPDX>` to every caller |
 | `validate` defaults to `true` | `validate` defaults to `false` (grcli v0.2.0 needs `gemara_spec_dir`; #46 tracks flipping back) | Set `validate: "true"` and `gemara_spec_dir` to keep validation |
+| `tag` was only a push label | `tag` also supplies `metadata.version` when the YAML omits it | Check versionless artifacts: `tag: latest` now stamps `metadata.version: latest` |
 | `oras_version` input accepted | Removed (ORAS comes from the grcli install action) | Remove `oras_version` from callers |
 | `bundle_version` input accepted | Removed (silently ignored by GitHub Actions if still passed) | Remove `bundle_version` from callers |
 | `password` always required | Required in direct mode only | No change for direct-mode callers |
@@ -248,7 +249,7 @@ change:
 
 ### Unchanged
 
-All direct-mode inputs (`registry`, `tag`, `username`, `password`,
+All direct-mode inputs except `tag` (`registry`, `username`, `password`,
 `sign_source`, `verify_source`), promotion inputs (`promote_to_destination`,
 `destination_*`, `trust_mode`), and output keys (`digest`, `source_ref`,
 `source_digest`, `destination_ref`, `destination_digest`) work the same way.

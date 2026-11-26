@@ -15,9 +15,31 @@ Used in `.github/workflows/ci.yml` and `.github/workflows/action-test.yml`.
 
 Same structure as `minimal-catalog.yaml` but **omits `metadata.version`**.
 Used to test the `version` action input, which passes `--version` to grcli
-to stamp the version from the CLI.
+to stamp the version from the CLI, and the tag-rescue path (`tag` supplies
+`metadata.version` when the YAML omits it and no `version` input is set).
 
-Used in `.github/workflows/action-test.yml` (version-flag job).
+Used in `.github/workflows/action-test.yml` (version-flag and tag-rescue jobs).
+
+## `hub-minimal-catalog.yaml`
+
+Same structure as `minimal-catalog.yaml` but with a placeholder
+`metadata.author.id` (`canary-namespace`). The `grcli-canary` workflow's
+hub-mode job stamps the dispatch namespace into a runtime copy — the hub
+catalog requires `metadata.author.id` to match the repository namespace
+(`422 catalog_coordinate_mismatch` otherwise). The runtime copy is written
+inside the workspace so `publish.sh`'s workspace boundary guard accepts it.
+
+Used in `.github/workflows/grcli-canary.yml` (hub-mode-staging job).
+
+## `invalid-catalog.yaml`
+
+Same structure as `minimal-catalog.yaml` but the control's `state` is not a
+member of the schema's enum (`NotARealState`) and the required `objective`
+field is missing. Fails `grcli validate` against the Gemara CUE spec. Used to
+test the spec's "Validation failure" scenario: with `validate: "true"` and a
+spec dir, the action must fail before any pack or push.
+
+Used in `.github/workflows/action-test.yml` (input-validation job).
 
 ## `legacy-bundle/`
 
