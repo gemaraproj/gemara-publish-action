@@ -66,9 +66,10 @@ and verify destination trust with the same workflow identity constraints.
 - **Missing or invalid root YAML:** `grcli validate` fails before publish.
 - **Missing license:** Fail with a clear error (grcli requires `--license`).
 - **Missing password:** Fail with a clear error.
-- **Missing metadata.version:** grcli requires this field for packing. The `--version`
-  CLI flag stamps a value from the command line; the action exposes this as the
-  optional `version` input.
+- **Missing metadata.version:** grcli requires this field for packing. The action
+  resolves it in direct mode as: the `version` input (passed as `--version`),
+  then the YAML's own `metadata.version`, then the `tag` input as a rescue for
+  files that omit it.
 - **Digest resolution:** Use `oras resolve` on source/destination references and fail fast.
 - **Username default:** `GITHUB_ACTOR` when username omitted.
 
@@ -201,7 +202,8 @@ When `promote_to_destination` is enabled, the Action SHALL honor `trust_mode` (`
   (#46); `verified_source`/`verified_destination` emit `skipped` instead of
   `false` when not attempted; `oras_version` and `bundle_version` are removed;
   and `tag` additionally supplies `metadata.version` for YAMLs that omit it.
-  The inputs listed above (`registry`, `tag`, `username`, `password`,
-  `sign_source`, `verify_source`) keep their documented meaning.
+  The inputs listed above (`registry`, `username`, `password`,
+  `sign_source`, `verify_source`) keep their documented meaning (`tag`
+  is the exception listed above — see the migration table).
 - **Consumers** can pin `grcli_version` and rely on stable
   `with:` / `outputs.digest` semantics documented in [README.md](../../README.md).

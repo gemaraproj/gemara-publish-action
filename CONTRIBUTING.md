@@ -50,9 +50,10 @@ grcli validate -f testdata/minimal-catalog.yaml --spec /tmp/gemara-spec
 CI runs on every pull request against `main` (see [`.github/workflows/`](.github/workflows/)):
 
 - `ci.yml` — validate (grcli + CUE against the Gemara spec), lib.sh unit tests, publish/finalize integration tests, legacy-bundle migration check
-- `action-test.yml` — end-to-end runs of the composite action against a local registry: publish, version flag and precedence, tag rescue, promotion (resign and copy-only), input validation, schema-validation failure
+- `action-test.yml` — end-to-end runs of the composite action against a local registry: publish, version flag and precedence, tag rescue, promotion (resign, copy-only, and copy-referrers), input validation, schema-validation failure
+- `signing-test.yml` — the default sign/verify posture (keyless cosign) against a local registry; runs on push (needs `id-token: write`, which fork PRs cannot receive)
 - `codeql.yml` — CodeQL over the workflow files
-- `grcli-canary.yml` — early-warning tests against unreleased grcli refs (hub-mode job is dispatch-only)
+- `grcli-canary.yml` — early-warning tests against unreleased grcli refs; runs on PRs touching `scripts/` or `testdata/` (hub-mode job is dispatch-only)
 
 ## Pull Request Guidelines
 
