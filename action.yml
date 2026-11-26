@@ -81,16 +81,16 @@ inputs:
   validate:
     description: >-
       Run grcli validate (cue vet against the authoritative Gemara CUE schemas)
-      before publish. Requires gemara_spec_dir to point at a local Gemara spec
-      checkout. CUE is installed automatically when this is enabled.
+      before publish. grcli resolves the schema from the CUE registry
+      automatically. CUE is installed automatically when this is enabled.
     required: false
-    default: "false"
+    default: "true"
   gemara_spec_dir:
     description: >-
       Path to a local Gemara spec checkout for grcli validate --spec.
-      Required when validate is true (grcli v0.2.0 cannot resolve the
-      spec without it; a future grcli version may resolve it from the
-      CUE registry automatically).
+      Optional — grcli resolves the schema from the CUE registry by
+      default. Use this to validate against a local spec checkout
+      (e.g. for unreleased schema changes).
     required: false
     default: ""
   version:
