@@ -102,9 +102,16 @@ else
   fi
 
   if [[ "${VERIFY_SOURCE}" == "true" ]]; then
-    echo "Verifying source digest: ${SOURCE_REF}"
-    verify_ref "${SOURCE_REF}"
-    OUT_VERIFIED_SOURCE="true"
+    if [[ "${NO_SIGN}" == "true" ]]; then
+      # Nothing was signed (no_sign: true), so there is no signature to
+      # verify; cosign verify would fail with a non-actionable error.
+      echo "::warning::verify_source is true but no_sign is true — skipping source verification (nothing was signed)."
+      OUT_VERIFIED_SOURCE="skipped"
+    else
+      echo "Verifying source digest: ${SOURCE_REF}"
+      verify_ref "${SOURCE_REF}"
+      OUT_VERIFIED_SOURCE="true"
+    fi
   fi
 fi
 
@@ -161,6 +168,14 @@ else
 fi
 
 DEST_TAG_RESOLVED="${DEST_TAG:-${TAG:-latest}}"
+if [[ -z "${DEST_TAG:-}" && -z "${TAG:-}" ]]; then
+  # Neither destination_tag nor tag was set. In hub mode tag is unused
+  # (grcli derives the source tag from metadata.version), so this fallback
+  # fires for every hub-mode promotion without an explicit destination_tag
+  # — repeated promotions of different versions then clobber the same
+  # :latest tag on the destination registry.
+  echo "::warning::Neither destination_tag nor tag is set — promoting to :latest. Set destination_tag to pin the destination tag (in hub mode the source tag is derived from metadata.version and cannot be inferred here)."
+fi
 DEST_REF_TAGGED="${DEST_REGISTRY}/${DEST_REPOSITORY}:${DEST_TAG_RESOLVED}"
 
 echo "${DEST_PASSWORD}" | oras login "${DEST_REGISTRY}" -u "${DEST_USERNAME}" --password-stdin
@@ -211,9 +226,16 @@ if [[ "${NO_SIGN}" != "true" ]]; then
 fi
 
 if [[ "${VERIFY_DESTINATION}" == "true" ]]; then
-  echo "Verifying destination digest: ${OUT_DESTINATION_REF}"
-  verify_ref "${OUT_DESTINATION_REF}"
-  OUT_VERIFIED_DESTINATION="true"
+  if [[ "${NO_SIGN}" == "true" && "${TRUST_MODE}" != "copy-only" && "${TRUST_MODE}" != "copy-referrers" ]]; then
+    # Nothing was signed on the destination (no_sign: true, resign mode) —
+    # same interaction as verify_source above.
+    echo "::warning::verify_destination is true but no_sign is true with trust_mode=${TRUST_MODE} — skipping destination verification (nothing was signed)."
+    OUT_VERIFIED_DESTINATION="skipped"
+  else
+    echo "Verifying destination digest: ${OUT_DESTINATION_REF}"
+    verify_ref "${OUT_DESTINATION_REF}"
+    OUT_VERIFIED_DESTINATION="true"
+  fi
 fi
 
 # ── Write promotion outputs ──────────────────────────────────

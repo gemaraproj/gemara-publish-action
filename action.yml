@@ -155,7 +155,11 @@ inputs:
     required: false
     default: ""
   destination_tag:
-    description: Destination tag when promoting (defaults to source tag input when empty).
+    description: >-
+      Destination tag when promoting. Falls back to the tag input when empty;
+      when both are empty (typical in hub mode, where tag is unused), falls
+      back to latest with a warning — set it explicitly to avoid clobbering
+      a shared latest tag.
     required: false
     default: ""
   destination_username:
