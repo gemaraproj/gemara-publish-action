@@ -76,8 +76,8 @@ Design decisions are recorded in [docs/adr/](docs/adr/).
 | `repository` | Required in direct mode. In hub mode, must match the coordinate the hub derives from the artifact (see Hub mode) — never an override; required when promoting. | Both |
 | `tag` | Tag to push. Required in direct mode. Also supplies `metadata.version` when the YAML omits it; a file that carries a version keeps it. | Direct |
 | `username`, `password` | Source registry auth. | Direct |
-| `validate` | Run `grcli validate` before publish (default `true`). | Both |
-| `gemara_spec_dir` | Optional path to a local Gemara spec checkout for validation. grcli resolves the schema from the CUE registry by default; use this to validate against unreleased schema changes. | Both |
+| `validate` | Run `grcli validate` before publish (default `false`; requires `gemara_spec_dir`). | Both |
+| `gemara_spec_dir` | Path to local Gemara spec checkout for validation. Required when `validate` is `true`. | Both |
 | `grcli_version` | grcli release tag to install (default `v0.2.0`). | Both |
 | `working_directory` | Working directory for resolving the `file` input (default `.`). | Both |
 | `sign_source`, `verify_source` | Source signature controls. | Direct |
@@ -236,7 +236,7 @@ change:
 | Before | After | Action needed |
 |--------|-------|---------------|
 | No `license` input | `license` **required** | Add `license: <SPDX>` to every caller |
-| `validate` needs a local spec checkout | `validate` resolves the schema from the CUE registry (`gemara_spec_dir` optional) | None (validate stays on by default) |
+| `validate` defaults to `true` | `validate` defaults to `false` (grcli v0.2.0 needs `gemara_spec_dir`; #46 tracks flipping back) | Set `validate: "true"` and `gemara_spec_dir` to keep validation |
 | `oras_version` input accepted | Removed (ORAS comes from the grcli install action) | Remove `oras_version` from callers |
 | `bundle_version` input accepted | Removed (silently ignored by GitHub Actions if still passed) | Remove `bundle_version` from callers |
 | `password` always required | Required in direct mode only | No change for direct-mode callers |

@@ -31,10 +31,17 @@ jobs:
         with:
           version: "v0.15.1"
 
+      - name: Checkout Gemara spec
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gemaraproj/gemara
+          path: gemara-spec
+          persist-credentials: false
+
       - name: Validate testdata
         run: |
           set -euo pipefail
-          grcli validate -f testdata/minimal-catalog.yaml
+          grcli validate -f testdata/minimal-catalog.yaml --spec "$GITHUB_WORKSPACE/gemara-spec"
           echo "Validation passed"
 
       - name: Publish dry run and verify OCI layout
