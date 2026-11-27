@@ -3,7 +3,7 @@ module github.com/gemaraproj/gemara-publish-action/cmd/grc
 go 1.26.0
 
 require (
-	github.com/gemaraproj/go-gemara v0.12.0
+	github.com/gemaraproj/go-gemara v0.13.0
 	oras.land/oras-go/v2 v2.7.0
 )
 
